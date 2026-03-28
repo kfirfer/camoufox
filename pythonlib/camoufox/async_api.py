@@ -1,6 +1,9 @@
 import asyncio
+import json as _json
+import urllib.request
 from functools import partial
-from typing import Any, Dict, Optional, Union, overload
+from typing import Any, Dict, List, Optional, Union, overload
+from urllib.parse import urlparse
 
 from playwright.async_api import (
     Browser,
@@ -12,6 +15,7 @@ from typing_extensions import Literal
 
 from camoufox.virtdisplay import VirtualDisplay
 
+from .fingerprints import generate_context_fingerprint
 from .utils import async_attach_vd, launch_options
 
 
@@ -98,3 +102,84 @@ async def AsyncNewBrowser(
     # Browser
     browser = await playwright.firefox.launch(**from_options)
     return await async_attach_vd(browser, virtual_display)
+
+
+def _proxy_url_with_creds(proxy: Dict[str, str]) -> str:
+    """Builds a proxy URL string with embedded credentials."""
+    parsed = urlparse(proxy.get("server", ""))
+    user = proxy.get("username", "")
+    pwd = proxy.get("password", "")
+    if user and pwd:
+        return f"{parsed.scheme}://{user}:{pwd}@{parsed.netloc}"
+    return proxy.get("server", "")
+
+
+async def _resolve_proxy_geo(proxy: Dict[str, str]) -> Dict[str, Optional[str]]:
+    """Queries ip-api.com through the proxy for the exit IP and timezone."""
+    proxy_url = _proxy_url_with_creds(proxy)
+
+    def _fetch() -> Dict[str, Optional[str]]:
+        handler = urllib.request.ProxyHandler({"http": proxy_url, "https": proxy_url})
+        opener = urllib.request.build_opener(handler)
+        try:
+            with opener.open("http://ip-api.com/json?fields=query,timezone", timeout=10) as resp:
+                data = _json.loads(resp.read())
+                return {"ip": data.get("query") or None, "timezone": data.get("timezone") or None}
+        except Exception:
+            return {"ip": None, "timezone": None}
+
+    return await asyncio.get_event_loop().run_in_executor(None, _fetch)
+
+
+async def AsyncNewContext(
+    browser: Browser,
+    *,
+    preset: Optional[Dict[str, Any]] = None,
+    os: Optional[str] = None,
+    ff_version: Optional[str] = None,
+    webrtc_ip: Optional[str] = None,
+    proxy: Optional[Dict[str, str]] = None,
+    geolocation: Optional[Dict[str, float]] = None,
+    **context_kwargs: Any,
+) -> BrowserContext:
+    """
+    Creates a new browser context with a unique fingerprint identity.
+
+    Each context gets its own real fingerprint preset (navigator, screen, WebGL, fonts, etc.)
+    with unique seeds for audio, canvas, and font spacing noise. All values are applied
+    via addInitScript so they self-destruct before page scripts can detect them.
+
+    Parameters:
+        browser: A Browser instance from AsyncNewBrowser or AsyncCamoufox.
+        preset: A specific fingerprint preset dict to use. If None, picks randomly.
+        os: Target OS for preset selection ("windows", "macos", "linux").
+        ff_version: Firefox version string for UA patching.
+        webrtc_ip: IPv4 address to spoof for WebRTC ICE candidates.
+        proxy: Per-context proxy (Playwright format: {"server": "...", "username": "...", "password": "..."}).
+        geolocation: Per-context geolocation ({"latitude": float, "longitude": float}).
+        **context_kwargs: Additional Playwright new_context() options.
+    """
+    # Auto-derive WebRTC IP and timezone from proxy's exit IP when not explicitly provided
+    if proxy and (not webrtc_ip or "timezone_id" not in context_kwargs):
+        geo = await _resolve_proxy_geo(proxy)
+        if not webrtc_ip:
+            webrtc_ip = geo["ip"]
+        if "timezone_id" not in context_kwargs and geo["timezone"]:
+            context_kwargs["timezone_id"] = geo["timezone"]
+
+    fp = await asyncio.get_event_loop().run_in_executor(
+        None,
+        lambda: generate_context_fingerprint(preset=preset, os=os, ff_version=ff_version, webrtc_ip=webrtc_ip),
+    )
+
+    # Merge generated context options with user overrides (user wins)
+    opts: Dict[str, Any] = {**fp['context_options'], **context_kwargs}
+    if proxy:
+        opts['proxy'] = proxy
+    if geolocation:
+        opts['geolocation'] = geolocation
+        opts.setdefault('permissions', ['geolocation'])
+
+    context = await browser.new_context(**opts)
+    await context.add_init_script(fp['init_script'])
+    return context
