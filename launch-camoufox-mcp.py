@@ -436,6 +436,17 @@ def main():
     # Playwright MCP's contextOptions maps to browser.newContext() options.
     # extraHTTPHeaders overrides the Accept-Encoding header for ALL requests
     # made by pages in this context, bypassing the broken C++ patch entirely.
+    #
+    # TESTED (2026-05): removed this override to advertise the full
+    # `gzip, deflate, br, zstd` set that real Firefox 146 sends.  Result:
+    # cloudflare.com served `Content-Encoding: br` and the body decoded to
+    # binary garbage / replacement characters — bug #473 is still active in
+    # our build.  Override restored.  Trade-off accepted: outbound
+    # Accept-Encoding differs from stock Firefox (`gzip, deflate` vs the
+    # full `gzip, deflate, br, zstd` Firefox sends).  This is a real,
+    # detectable network-layer signal for LinkedIn-class anti-bot systems,
+    # but the alternative (broken page rendering) is strictly worse.
+    # Real fix has to happen in Camoufox upstream (PRs #474, #517).
     context_options = {
         "colorScheme": "dark",
         "userAgent": _CLEAN_UA,
