@@ -897,6 +897,76 @@ them so they're not "discovered" mid-incident.
 
 ---
 
+## 17. Troubleshooting — if something fails
+
+Common failure modes and how to root-cause them.
+
+### 17.1 UA still contains "Camoufox"
+
+The launcher's saved-fingerprint refresh logic didn't fire — a cached
+BrowserForge fingerprint from an older launcher run is being replayed.
+
+```bash
+rm -f ~/.camoufox-mcp-fingerprint.json
+```
+
+Restart the MCP server (re-run `claude mcp add playwright ...` or kill
+the spawned launcher process). Re-run section 0 to confirm the new UA
+appears in the CAMOU_CONFIG dump.
+
+### 17.2 `humanize` / `showcursor` not active (cursor jumps)
+
+Section 0 will catch this — the `humanize: True` / `showcursor: True`
+flags won't be in the CAMOU_CONFIG dump.
+
+Most likely cause: `launch_options()` raised an exception inside the
+`camoufox` library and the launcher's silent `except: config = {}`
+fallback dropped the entire spoof config. On macOS this is usually the
+`properties.json` lookup failing on app-bundle paths.
+
+Check `launch-camoufox-mcp.py` for the `_load_properties_macos_bundle`
+monkey-patch — it must redirect `Contents/MacOS/properties.json`
+lookups to `Contents/Resources/properties.json`.
+
+### 17.3 Error strings still say "Camoufox" at runtime
+
+Section 14.A will surface this. Root causes, in order of likelihood:
+
+1. A stale `Camoufox.app` is being launched — check `--executable-path`
+   resolves to the freshly-built binary (compare mtime).
+2. The chrome resource symlink target wasn't edited. Verify
+   `camoufox-146.0.1-beta.25/browser/locales/en-US/chrome/overrides/appstrings.properties`
+   says `Firefox can't establish a connection…` (not `Camoufox`).
+3. A release-style `omni.ja` was produced (`./mach build stage-package`
+   was run). The dev symlinks are overridden by the archive. Either
+   rebuild without packaging or repack with the corrected strings.
+
+### 17.4 CreepJS shows >0% headless / >0% stealth
+
+- The `--no-headless` flag was not applied — the launcher fell back to
+  headless mode. Check launcher logs for headless=True.
+- Screen-size mismatch — headless's default 1280×720 leaked into
+  `screen.width × screen.height`. Verify the `window_size` block in
+  `launch-camoufox-mcp.py` runs before launch.
+- A `mcp__playwright__browser_resize` call after launch shrank the
+  window to a known-headless dimension. Don't resize to 1280×720.
+
+### 17.5 ServiceWorker reports a different timezone from main thread
+
+The C++ ServiceWorker timezone fallback patch in `WorkerPrivate.cpp`
+isn't compiled in. Verify the file contains
+`MaskConfig::GetString("timezone")` (section 0 has the grep check), then
+rebuild with `./mach build` in `camoufox-146.0.1-beta.25/`.
+
+### 17.6 Accept-Encoding shows `gzip, deflate` only (missing `br, zstd`)
+
+The C++ patch from PR #474 isn't applied. The MaskConfig override must
+sit inside the `else if (isSecure)` branch in `nsHttpHandler.cpp`, not
+outside it. Section 0 has the grep check. Apply the patch, then
+`./mach build`.
+
+---
+
 ## Appendix A — Quick reference: known-good values
 
 If a check returns one of these values for our current setup (Camoufox
