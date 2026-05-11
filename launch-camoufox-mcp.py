@@ -264,6 +264,13 @@ def main():
     if args.showcursor:
         user_config["showcursor"] = True
 
+    # Pin HTTPS Accept-Encoding to real Firefox 146 default so it cannot drift
+    # via a stale BrowserForge fingerprint (Bug 2 of camoufox#473).  This value
+    # flows into nsHttpHandler::SetAcceptEncodings via MaskConfig and — with
+    # the C++ patch from PR #474 — applies only to HTTPS, leaving HTTP and
+    # dictionary compression paths untouched.
+    user_config["headers.Accept-Encoding"] = "gzip, deflate, br, zstd"
+
     # In non-headless (headed) mode, pin screen dimensions to the actual
     # physical display to avoid rendering defects: flickering margins,
     # oversized windows, constant screen-size changes, and broken layouts.
@@ -432,26 +439,16 @@ def main():
     if persistent:
         browser_config["userDataDir"] = user_data_dir
 
-    # Context-level Accept-Encoding override (proven workaround for #473).
-    # Playwright MCP's contextOptions maps to browser.newContext() options.
-    # extraHTTPHeaders overrides the Accept-Encoding header for ALL requests
-    # made by pages in this context, bypassing the broken C++ patch entirely.
-    #
-    # TESTED (2026-05): removed this override to advertise the full
-    # `gzip, deflate, br, zstd` set that real Firefox 146 sends.  Result:
-    # cloudflare.com served `Content-Encoding: br` and the body decoded to
-    # binary garbage / replacement characters — bug #473 is still active in
-    # our build.  Override restored.  Trade-off accepted: outbound
-    # Accept-Encoding differs from stock Firefox (`gzip, deflate` vs the
-    # full `gzip, deflate, br, zstd` Firefox sends).  This is a real,
-    # detectable network-layer signal for LinkedIn-class anti-bot systems,
-    # but the alternative (broken page rendering) is strictly worse.
-    # Real fix has to happen in Camoufox upstream (PRs #474, #517).
+    # Accept-Encoding is now handled at the C++ level by the patched
+    # nsHttpHandler::SetAcceptEncodings (camoufox#473 fix from PR #474, applied
+    # locally in patches/network-patches.patch).  The override is honoured
+    # only on the HTTPS branch and the HTTP/dictionary paths use real Firefox
+    # values.  No Playwright-layer override needed — pages now decode br/zstd
+    # correctly AND outbound Accept-Encoding matches real Firefox 146.
     context_options = {
         "colorScheme": "dark",
         "userAgent": _CLEAN_UA,
         "extraHTTPHeaders": {
-            "accept-encoding": "gzip, deflate",
             "user-agent": _CLEAN_UA,
         },
     }
