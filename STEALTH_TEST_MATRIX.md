@@ -15,6 +15,55 @@ it matters, and pass criteria. JS snippets are paste-ready for
 
 ---
 
+## Prerequisites & Setup
+
+Before running anything below.
+
+**Hardware / OS**: macOS Apple Silicon. All paths below are hardcoded to
+`obj-aarch64-apple-darwin/`. Substitute consistently on other archs.
+
+**Built Camoufox binary**:
+```
+/Users/dev345/code/kfirfer/camoufox/camoufox-146.0.1-beta.25/obj-aarch64-apple-darwin/dist/Camoufox.app/Contents/MacOS/camoufox
+```
+Built with `./mach build` in `camoufox-146.0.1-beta.25/` (dev build —
+chrome resources are symlinked, no packaged `omni.ja`).
+
+**Python venv** with `playwright` and `camoufox` installed:
+```
+/Users/dev345/code/kfirfer/claude-1/.venv/
+```
+
+**Persistent profile dir**:
+```
+/Users/dev345/playwright-profile/profile-claude-camoufox/
+```
+
+**Bootstrap the Playwright MCP server** in a fresh Claude Code session:
+
+```bash
+claude mcp add playwright -- \
+  /Users/dev345/code/kfirfer/claude-1/.venv/bin/python3 \
+  /Users/dev345/code/kfirfer/camoufox/launch-camoufox-mcp.py \
+  --user-data-dir /Users/dev345/playwright-profile/profile-claude-camoufox \
+  --executable-path "/Users/dev345/code/kfirfer/camoufox/camoufox-146.0.1-beta.25/obj-aarch64-apple-darwin/dist/Camoufox.app/Contents/MacOS/camoufox" \
+  --no-headless \
+  --humanize \
+  --showcursor
+```
+
+After adding, restart Claude Code / reconnect the MCP server so the
+current `launch-camoufox-mcp.py` is spawned.
+
+If you change locale, OS spoofing, or other fingerprint-affecting
+launcher args, delete the saved BrowserForge fingerprint first:
+
+```bash
+rm -f ~/.camoufox-mcp-fingerprint.json
+```
+
+---
+
 ## 0. Configuration sanity (no browser needed)
 
 Run before any browser test — catches silent-config regressions in the launcher.
@@ -732,7 +781,37 @@ predict but don't guarantee.
 
 ---
 
-## 14. Local file-system checks
+## 14. Local file-system checks + runtime brand-leak trigger
+
+### 14.A — Runtime: force a connection-failure error and inspect chrome console
+
+The file-system grep at 14.B confirms the right strings are on disk; this
+proves the running binary actually emits them at runtime. Pre-rebrand,
+the chrome console produced `[JavaScript Error: "Camoufox can't establi…"`
+on any WebSocket/EventSource failure — a hard brand leak visible to any
+script reading the Playwright `console` channel.
+
+Navigate to `about:blank` first, then evaluate:
+
+```js
+async () => {
+  try { new WebSocket('wss://nonexistent-host-rebuild-check.invalid/'); } catch(_) {}
+  try { new EventSource('https://nonexistent-host-rebuild-check.invalid/'); } catch(_) {}
+  await new Promise(r => setTimeout(r, 2500));
+  return 'errors triggered';
+}
+```
+
+Then read `mcp__playwright__browser_console_messages`. Pass criteria:
+
+- One or more lines containing `"Firefox can't establis..."`
+- ZERO lines containing `"Camoufox can't establi..."`
+
+If you see `"Camoufox can't establi..."`, the binary is stale (a build
+without the rebrand patch) or a different `.app` is being launched. Go
+back to section 0 and verify binary mtime + `appstrings.properties`.
+
+### 14.B — File-system checks
 
 Verify the binary's resources don't leak the brand string:
 
