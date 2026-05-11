@@ -24,6 +24,7 @@ import json
 import os
 import pathlib
 import platform
+import re
 import subprocess
 import sys
 import tempfile
@@ -173,6 +174,18 @@ def main():
     if persistent:
         os.makedirs(user_data_dir, exist_ok=True)
 
+    # Detect Firefox major version from the executable path (e.g. "camoufox-146-..."
+    # → 146).  Used to derive a version-matched UA so the spoofed UA stays in
+    # sync with the actual Firefox engine.  Without this, upgrading the binary
+    # to a newer Camoufox/Firefox would silently leave a stale Firefox/146.0 UA
+    # claim while the engine reports newer feature support — a strong bot
+    # signal (UA-vs-engine mismatch).
+    ff_version = 146  # default
+    if args.executable_path:
+        match = re.search(r'camoufox-(\d+)', args.executable_path)
+        if match:
+            ff_version = int(match.group(1))
+
     # Load saved fingerprint config for cross-session consistency
     saved_config = _load_saved_config()
 
@@ -209,20 +222,34 @@ def main():
     # Pin hardwareConcurrency to the Worker-reported value to avoid mismatch.
     user_config["navigator.hardwareConcurrency"] = worker_hw_concurrency
 
-    # FIX: Camoufox 146.0.1-beta.25 leaks its identity in the User-Agent string
+    # FIX: Camoufox leaks its identity in the User-Agent string
     # (e.g. "Mozilla/5.0 (...) Gecko/20100101 Camoufox/146.0.1-beta.25").  This
     # is a one-line giveaway for any anti-bot system doing UA substring checks.
-    # Override the UA with a clean stock Firefox 146 macOS string and pin the
-    # related navigator/header fields so they all agree.  Verified at
-    # https://bot.sannysoft.com/ — UA row should read pure Firefox.
+    # Override with a clean stock Firefox macOS UA, derived from the detected
+    # ff_version so a Camoufox upgrade automatically bumps the UA version.
+    # Verified empirically against stock Firefox 146 on macOS:
+    #   navigator.userAgent  → "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:146.0) Gecko/20100101 Firefox/146.0"
+    #   navigator.appVersion → "5.0 (Macintosh)"
+    #   navigator.oscpu      → "Intel Mac OS X 10.15"   (frozen by Firefox UA reduction; same on Apple Silicon)
+    #   navigator.platform   → "MacIntel"               (frozen; same on Apple Silicon)
     _CLEAN_UA = (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:146.0) "
-        "Gecko/20100101 Firefox/146.0"
+        f"Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:{ff_version}.0) "
+        f"Gecko/20100101 Firefox/{ff_version}.0"
     )
     _CLEAN_APP_VERSION = "5.0 (Macintosh)"
-    # Override only if a saved config didn't already pin a clean (non-Camoufox)
-    # UA — saved_config wins for cross-session consistency.
-    if "Camoufox" in user_config.get("navigator.userAgent", ""):
+
+    # Refresh the saved UA if it (a) leaks "Camoufox", or (b) pins a stale
+    # Firefox major version that no longer matches the current binary.
+    # Without (b), saved_config would freeze rv:146.0 even after upgrading
+    # to camoufox-147+, producing a UA-vs-engine mismatch.
+    _saved_ua = user_config.get("navigator.userAgent", "")
+    _ua_version_match = re.search(r'rv:(\d+)\.', _saved_ua)
+    _saved_ua_version = int(_ua_version_match.group(1)) if _ua_version_match else None
+    if (
+        "Camoufox" in _saved_ua
+        or _saved_ua_version is None
+        or _saved_ua_version != ff_version
+    ):
         user_config.pop("navigator.userAgent", None)
         user_config.pop("navigator.appVersion", None)
         user_config.pop("headers.User-Agent", None)
@@ -305,12 +332,7 @@ def main():
         # CamoufoxNotInstalled even when executable_path is provided.
         # Without this, launch_options() fails and falls back to config={},
         # losing ALL fingerprint config including humanize/showcursor.
-        if "ff_version" not in launch_kwargs:
-            # Extract version from the executable path if possible (e.g.
-            # "camoufox-146.0.1-beta.25" → 146), otherwise default to 146.
-            import re
-            match = re.search(r'camoufox-(\d+)', args.executable_path)
-            launch_kwargs["ff_version"] = int(match.group(1)) if match else 146
+        launch_kwargs.setdefault("ff_version", ff_version)
 
     try:
         config = launch_options(**launch_kwargs)
