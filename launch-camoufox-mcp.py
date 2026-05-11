@@ -587,8 +587,7 @@ def main():
 
     mcp_config = {
         "browser": browser_config,
-        "capabilities": ["core", "pdf"],
-        "vision": True,
+        "capabilities": ["core", "pdf", "vision"],
     }
 
     # Write config to a temp file
