@@ -22,13 +22,39 @@ Instead, this script:
 import argparse
 import json
 import os
+import pathlib
 import platform
 import subprocess
 import sys
 import tempfile
 
 from browserforge.fingerprints import Screen
+import camoufox.utils as _camoufox_utils
 from camoufox.utils import launch_options
+
+
+# WORKAROUND: camoufox.utils._load_properties() looks for `properties.json`
+# next to the executable (`<executable_dir>/properties.json`).  On macOS,
+# Camoufox is built as an app bundle where the executable lives in
+# `Camoufox.app/Contents/MacOS/` but `properties.json` is shipped in
+# `Camoufox.app/Contents/Resources/`.  When a custom --executable-path
+# pointing inside Contents/MacOS/ is passed, _load_properties() raises
+# FileNotFoundError, launch_options() fails, and the script falls back to
+# an empty config — silently dropping humanize/showcursor and the full
+# BrowserForge fingerprint.  Redirect the lookup to the Resources/ dir
+# so launch_options() succeeds and CAMOU_CONFIG_* env vars are populated.
+_orig_load_properties = _camoufox_utils._load_properties
+
+def _load_properties_macos_bundle(path=None):
+    if path:
+        p = pathlib.Path(str(path))
+        if p.parent.name == "MacOS" and p.parent.parent.name == "Contents":
+            resources_props = p.parent.parent / "Resources" / "properties.json"
+            if resources_props.exists():
+                path = resources_props
+    return _orig_load_properties(path=path)
+
+_camoufox_utils._load_properties = _load_properties_macos_bundle
 
 
 # Persistent fingerprint config path — reusing the same config across sessions
