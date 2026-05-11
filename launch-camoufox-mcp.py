@@ -25,7 +25,6 @@ import os
 import pathlib
 import platform
 import re
-import subprocess
 import sys
 import tempfile
 
@@ -86,36 +85,6 @@ def _save_config(config_dict):
         pass
 
 
-def _detect_worker_hardware_concurrency():
-    """Return the hardwareConcurrency value that Firefox Web Workers report.
-
-    Camoufox's C++ patch spoofs navigator.hardwareConcurrency in the main
-    thread but does NOT patch WorkerNavigator, so Workers return the real
-    value from the OS/browser.  On macOS Apple Silicon, Firefox Workers
-    report the efficiency-core count (hw.perflevel1.logicalcpu = 4 on M1/
-    M2/M3), not the total logical CPU count.  We detect this so we can pin
-    the fingerprint config to the same value and avoid a main↔worker
-    mismatch that trips bot detection.
-    """
-    if platform.system() == "Darwin":
-        # Apple Silicon has performance + efficiency cores.  Firefox Workers
-        # report the efficiency-core count.
-        try:
-            result = subprocess.run(
-                ["sysctl", "-n", "hw.perflevel1.logicalcpu"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if result.returncode == 0 and result.stdout.strip().isdigit():
-                return int(result.stdout.strip())
-        except (OSError, subprocess.TimeoutExpired):
-            pass
-        # Intel Mac or sysctl unavailable — fall through to os.cpu_count()
-
-    return os.cpu_count() or 4
-
-
 
 def main():
     parser = argparse.ArgumentParser(description="Launch Playwright MCP with Camoufox")
@@ -166,6 +135,47 @@ def main():
         help="Path to a custom Camoufox binary. "
              "If omitted, uses the default from camoufox.utils.launch_options().",
     )
+    parser.add_argument(
+        "--locale-language",
+        default=None,
+        help="ISO 639-1 language code to pin via Camoufox's locale spoof.  "
+             "When omitted (default), navigator.language / Accept-Language "
+             "are left unspoofed and Firefox reports whatever the host OS "
+             "is configured for — same as a real Chrome on this machine.",
+    )
+    parser.add_argument(
+        "--locale-region",
+        default=None,
+        help="ISO 3166-1 alpha-2 region code, paired with --locale-language "
+             "to form navigator.language (e.g. en-SG).  Both must be set "
+             "to activate locale spoofing.  When omitted, no spoof applied.",
+    )
+    parser.add_argument(
+        "--timezone",
+        default=None,
+        help="IANA timezone identifier to pin (e.g. Asia/Singapore).  When "
+             "omitted (default), Firefox reads the timezone from the host "
+             "OS — same as a real Chrome.  Useful if you switch VPN exits "
+             "and don't want to edit flags each time.",
+    )
+    parser.add_argument(
+        "--block-webrtc",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Disable WebRTC entirely (default: true).  When enabled, real "
+             "public IP cannot leak via STUN candidates.  Use --no-block-webrtc "
+             "if the target site genuinely needs WebRTC (video calls, etc.); "
+             "without a Camoufox-supported `webrtc:ipv4`/`webrtc:ipv6` spoof "
+             "value, the real IP will leak.",
+    )
+    parser.add_argument(
+        "--hardware-concurrency",
+        type=int,
+        default=None,
+        help="Override navigator.hardwareConcurrency.  Defaults to a plausible "
+             "value for the current host (8 on Apple Silicon).  Camoufox patches "
+             "WorkerNavigator too, so main and worker stay consistent.",
+    )
     args = parser.parse_args()
 
     user_data_dir = args.user_data_dir
@@ -173,6 +183,41 @@ def main():
 
     if persistent:
         os.makedirs(user_data_dir, exist_ok=True)
+
+        # Strip stale locale/timezone user prefs from the persistent profile's
+        # prefs.js when those domains aren't being pinned this session.  Firefox
+        # writes these on every shutdown when a spoof was active, and they
+        # then override our MaskConfig-level behavior on the next launch even
+        # after we've stopped pinning — exactly the symptom that bit when
+        # this knob first flipped (Accept-Language kept reporting en-SG long
+        # after `--locale-language` was removed).  prefs.js writes themselves
+        # are atomic per-line, so a targeted regex strip is safe.
+        prefs_path = os.path.join(user_data_dir, "prefs.js")
+        if os.path.exists(prefs_path):
+            stale_pref_names = []
+            stripping_locale = not (args.locale_language and args.locale_region)
+            stripping_tz = not args.timezone
+            if stripping_locale:
+                stale_pref_names += [
+                    "intl.accept_languages",
+                    "intl.locale.requested",
+                    "general.useragent.locale",
+                ]
+            try:
+                with open(prefs_path, "r") as _f:
+                    _lines = _f.readlines()
+                _kept = [
+                    line for line in _lines
+                    if not any(
+                        line.startswith(f'user_pref("{name}"')
+                        for name in stale_pref_names
+                    )
+                ]
+                if len(_kept) != len(_lines):
+                    with open(prefs_path, "w") as _f:
+                        _f.writelines(_kept)
+            except (IOError, OSError):
+                pass
 
     # Detect Firefox major version from the executable path (e.g. "camoufox-146-..."
     # → 146).  Used to derive a version-matched UA so the spoofed UA stays in
@@ -201,25 +246,30 @@ def main():
         is_linux = platform.system() == "Linux"
         headless_mode = "virtual" if is_linux else True
 
-    # Detect the hardwareConcurrency value that Firefox Web Workers will report.
+    # Pick navigator.hardwareConcurrency.
     #
-    # BUG: Camoufox's C++ patch for navigator.hardwareConcurrency only covers
-    # the main thread (nsGlobalWindowInner), NOT WorkerNavigator inside Web
-    # Workers.  deviceandbrowserinfo.com's "hasInconsistentWorkerValues" check
-    # compares hardwareConcurrency between main thread and a Web Worker — if
-    # BrowserForge picks a different value, the Worker leaks the unpatched
-    # value and triggers bot detection.
+    # Camoufox now patches BOTH Navigator::HardwareConcurrency (main thread)
+    # AND WorkerNavigator::HardwareConcurrency (worker thread) to read from
+    # MaskConfig — see dom/workers/WorkerNavigator.cpp:268.  Setting this
+    # config key propagates to both contexts, so main↔worker are guaranteed
+    # consistent regardless of what Firefox would have detected from the host.
     #
-    # On macOS Apple Silicon, Firefox Workers report the *efficiency* core
-    # count (hw.perflevel1.logicalcpu), not the total.  We detect this and
-    # pin the fingerprint to that value so both contexts agree.
-    # See: https://github.com/daijro/camoufox/issues/364
-    worker_hw_concurrency = _detect_worker_hardware_concurrency()
+    # The historical bug (#364) where Workers leaked the efficiency-core count
+    # on Apple Silicon is no longer present in this build, so we can pick a
+    # realistic value for the spoofed OS instead of pinning to the host's
+    # leaked value.  Real Apple Silicon Macs report 8 (M1/M2 base) up through
+    # 12 (M3/M4 Pro) cores via navigator.hardwareConcurrency.
+    if args.hardware_concurrency is not None:
+        worker_hw_concurrency = args.hardware_concurrency
+    elif platform.system() == "Darwin":
+        # Default to 8 — matches M1/M2 base config, the most common Mac.
+        worker_hw_concurrency = 8
+    else:
+        worker_hw_concurrency = os.cpu_count() or 4
 
     # Build the user config overlay.  Explicit values here take precedence
     # over BrowserForge auto-population and saved_config alike.
     user_config = dict(saved_config) if saved_config else {}
-    # Pin hardwareConcurrency to the Worker-reported value to avoid mismatch.
     user_config["navigator.hardwareConcurrency"] = worker_hw_concurrency
 
     # FIX: Camoufox leaks its identity in the User-Agent string
@@ -271,6 +321,33 @@ def main():
     # dictionary compression paths untouched.
     user_config["headers.Accept-Encoding"] = "gzip, deflate, br, zstd"
 
+    # Locale + timezone: by default we DON'T spoof these — Firefox reads them
+    # from the host OS, same as real Chrome.  This is the right choice when the
+    # host is behind a VPN that rotates exit locations: a pinned spoof would
+    # drift out of sync with the VPN IP every time it changes, creating the
+    # very IP↔TZ inconsistency that anti-bot systems flag.  Letting the host
+    # values through means there's no flag to edit on each VPN switch.
+    #
+    # Always strip any stale locale/TZ keys carried over from saved_config or
+    # BrowserForge auto-population — those would otherwise re-introduce a
+    # spoof we no longer want.  Pin only when the caller explicitly supplies
+    # an override via --locale-language + --locale-region (both required) or
+    # --timezone.
+    for k in (
+        "navigator.language",
+        "navigator.languages",
+        "headers.Accept-Language",
+        "locale:language",
+        "locale:region",
+        "timezone",
+    ):
+        user_config.pop(k, None)
+    if args.locale_language and args.locale_region:
+        user_config["locale:language"] = args.locale_language
+        user_config["locale:region"] = args.locale_region
+    if args.timezone:
+        user_config["timezone"] = args.timezone
+
     # In non-headless (headed) mode, pin screen dimensions to the actual
     # physical display to avoid rendering defects: flickering margins,
     # oversized windows, constant screen-size changes, and broken layouts.
@@ -316,6 +393,14 @@ def main():
         config=user_config,
         i_know_what_im_doing=True,  # suppress warning for manual navigator overrides
     )
+    # WebRTC: disable entirely to prevent the real public IP leaking via STUN
+    # ICE candidates.  Camoufox's `block_webrtc=True` sets
+    # `media.peerconnection.enabled=false` so navigator.connection / WebRTC
+    # APIs return unsupported — same posture as `privacy.resistFingerprinting`
+    # users.  If --no-block-webrtc is passed, the real IP will leak unless a
+    # `webrtc:ipv4`/`webrtc:ipv6` spoof is configured (currently not wired).
+    if args.block_webrtc:
+        launch_kwargs["block_webrtc"] = True
     # Human-like cursor movement (optional, launch kwarg).
     # See: https://camoufox.com/fingerprint/cursor-movement/
     # humanize accepts True (default maxTime) or a float (custom maxTime).
@@ -360,27 +445,38 @@ def main():
 
     # Save the generated fingerprint config for next session.
     # The CAMOU_CONFIG env var contains the full fingerprint JSON.
+    # Strip locale/TZ keys before saving when no spoof was requested — without
+    # this, BrowserForge-populated values would re-contaminate the saved file
+    # and re-introduce a region pin on the next launch.
+    _save_strip_keys = set()
+    if not (args.locale_language and args.locale_region):
+        _save_strip_keys.update({
+            "locale:language",
+            "locale:region",
+            "navigator.language",
+            "navigator.languages",
+            "headers.Accept-Language",
+        })
+    if not args.timezone:
+        _save_strip_keys.add("timezone")
     for k, v in camoufox_env.items():
         if k.startswith("CAMOU_CONFIG") and v:
             try:
                 fp_config = json.loads(v) if isinstance(v, str) else v
+                if _save_strip_keys:
+                    fp_config = {kk: vv for kk, vv in fp_config.items()
+                                 if kk not in _save_strip_keys}
                 _save_config(fp_config)
             except (json.JSONDecodeError, TypeError):
                 pass
             break
 
-    # Force-align hardwareConcurrency across main thread and Web Workers.
-    #
-    # Camoufox's MaskConfig C++ system does NOT intercept
-    # navigator.hardwareConcurrency — the config value is accepted but never
-    # read at runtime.  On macOS Apple Silicon the main thread sees all 16
-    # logical CPUs while Workers see only 4 (efficiency cores), triggering
-    # deviceandbrowserinfo.com's "hasInconsistentWorkerValues" check.
-    #
-    # Firefox's "dom.maxHardwareConcurrency" preference caps the value
-    # reported by BOTH Navigator AND WorkerNavigator at the engine level,
-    # so setting it to the Worker's natural value (4) makes them agree.
-    firefox_user_prefs["dom.maxHardwareConcurrency"] = worker_hw_concurrency
+    # hardwareConcurrency: Camoufox now patches both Navigator and
+    # WorkerNavigator (dom/workers/WorkerNavigator.cpp:268) to read from
+    # MaskConfig, so the user_config["navigator.hardwareConcurrency"] set
+    # above propagates to both contexts.  No `dom.maxHardwareConcurrency`
+    # pref needed — that ceiling-only pref couldn't raise a low detected
+    # value anyway, so it was redundant.
 
     # WORKAROUND: Camoufox Accept-Encoding spoofing bug (#473, #479, #535, #537).
     #

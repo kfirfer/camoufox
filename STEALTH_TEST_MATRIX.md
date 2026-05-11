@@ -13,6 +13,14 @@ it matters, and pass criteria. JS snippets are paste-ready for
 > Quick smoke test (90 seconds): jump to section 0, then run sections
 > 1.A and 2.A. If those pass, the launcher is healthy.
 
+> **Default behavior note (changed):** the launcher no longer pins
+> `locale:language` / `locale:region` / `timezone`.  Firefox reads them
+> from the host OS, same as a real Chrome — appropriate when the host is
+> behind a VPN that rotates exit locations.  Sections that expected
+> `en-SG` / `Asia/Singapore` (1.A, 2.A, 6, Appendix A) now expect the host
+> values; pass `--locale-language en --locale-region SG --timezone Asia/Singapore`
+> if you want the historic pinned posture back.
+
 ---
 
 ## Prerequisites & Setup
@@ -90,9 +98,14 @@ def fake_exec(prog, args, env):
         'humanize': cfg.get('humanize') is True,
         'showcursor': cfg.get('showcursor') is True,
         'navigator.hardwareConcurrency == 8': cfg.get('navigator.hardwareConcurrency') == 8,
-        'locale:language == en': cfg.get('locale:language') == 'en',
-        'locale:region == SG': cfg.get('locale:region') == 'SG',
-        'timezone == Asia/Singapore': cfg.get('timezone') == 'Asia/Singapore',
+        # No locale/TZ pin by default — host values flow through so they
+        # stay in sync with whatever VPN exit is active.  Pass
+        # --locale-language/--locale-region + --timezone to opt in to a pin.
+        'no locale:language pin': 'locale:language' not in cfg,
+        'no locale:region pin': 'locale:region' not in cfg,
+        'no timezone pin': 'timezone' not in cfg,
+        'no navigator.language pin': 'navigator.language' not in cfg,
+        'no headers.Accept-Language pin': 'headers.Accept-Language' not in cfg,
         'navigator.userAgent has Firefox/146.0': 'Firefox/146.0' in cfg.get('navigator.userAgent',''),
         'navigator.userAgent has NO Camoufox': 'Camoufox' not in cfg.get('navigator.userAgent',''),
         'headers.Accept-Encoding full set': cfg.get('headers.Accept-Encoding') == 'gzip, deflate, br, zstd',
@@ -983,8 +996,8 @@ If a check returns one of these values for our current setup (Camoufox
 | `navigator.buildID` | `20181001000000` |
 | `navigator.hardwareConcurrency` | `8` |
 | `navigator.maxTouchPoints` | `0` |
-| `navigator.language` | `en-SG` |
-| `navigator.languages` | `["en-SG", "en"]` |
+| `navigator.language` | (host's `defaults read NSGlobalDomain AppleLocale`, e.g. `en-US`) |
+| `navigator.languages` | (host's `AppleLanguages` array, e.g. `["en-US", …]`) |
 | `navigator.webdriver` | `false` |
 | `navigator.pdfViewerEnabled` | `true` |
 | `navigator.userAgentData` | `undefined` |
@@ -992,13 +1005,13 @@ If a check returns one of these values for our current setup (Camoufox
 | `navigator.getBattery` | `undefined` |
 | `navigator.plugins.length` | `5` |
 | `navigator.mimeTypes.length` | `2` |
-| `Intl.DateTimeFormat().resolvedOptions().timeZone` | `Asia/Singapore` |
-| `new Date().getTimezoneOffset()` | `-480` |
+| `Intl.DateTimeFormat().resolvedOptions().timeZone` | (host IANA TZ, `readlink /etc/localtime`) |
+| `new Date().getTimezoneOffset()` | (corresponds to host TZ; e.g. `-420` for Bangkok, `-480` for Singapore) |
 | `screen.width × screen.height` | `1512 × 982` (headed; varies headless) |
 | `screen.colorDepth` | `30` |
 | `window.devicePixelRatio` | `1` (see open questions) |
 | `Accept-Encoding` header | `gzip, deflate, br, zstd` |
-| `Accept-Language` header | `en-SG,en;q=0.5` |
+| `Accept-Language` header | (Firefox derives from host locale; e.g. `en-US,en;q=0.5`) |
 | `Priority` header | `u=0, i` |
 | WebGL `UNMASKED_RENDERER` | `Apple M1, or similar` (BrowserForge picks one) |
 | Speech `local` voices | `72` (Mac default) |
