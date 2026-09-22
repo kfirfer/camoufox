@@ -496,11 +496,11 @@ The repo `.venv` is uv-managed and has **no `pip` and no `pytest`**. `import cam
   git add pythonlib && git commit -m "pythonlib: emit _user_data_dir only when set; translate for in-process persistent contexts (fixes TypeError in Camoufox())"
   ```
 
-### [ ] Task 2.2: `launch_server()` persistent round-trip test
+### [X] Task 2.2: `launch_server()` persistent round-trip test
 
 **Files:** Test: `pythonlib/tests/test_user_data_dir.py` (append)
 
-- [ ] **Step 1: Test that the Node payload carries `_userDataDir`**
+- [X] **Step 1: Test that the Node payload carries `_userDataDir`**
   ```python
   def test_launch_server_forwards_user_data_dir(monkeypatch, tmp_path):
       import base64, json, subprocess
@@ -526,8 +526,8 @@ The repo `.venv` is uv-managed and has **no `pip` and no `pytest`**. `import cam
       # connection and clients never see the persistent default context.
       assert sent["_sharedBrowser"] is True
   ```
-- [ ] **Step 2: Run it (`../.venv/bin/python -m pytest tests/test_user_data_dir.py -v`). Expected: PASS** (validated). A `ValueError` means the upstream rejection was not removed. A `KeyError: '_sharedBrowser'` means the second half of Task 1.1 Step 5 is missing.
-- [ ] **Step 3: Commit** `git commit -am "pythonlib: test launch_server persistent profile forwarding"`
+- [X] **Step 2: Run it (`../.venv/bin/python -m pytest tests/test_user_data_dir.py -v`). Expected: PASS** (validated). A `ValueError` means the upstream rejection was not removed. A `KeyError: '_sharedBrowser'` means the second half of Task 1.1 Step 5 is missing.
+- [X] **Step 3: Commit** `git commit -am "pythonlib: test launch_server persistent profile forwarding"`
 
 ---
 

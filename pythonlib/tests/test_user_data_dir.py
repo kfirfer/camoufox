@@ -91,3 +91,28 @@ def test_new_browser_persistent_without_dir_raises():
     from camoufox import sync_api
     with pytest.raises(ValueError, match="user_data_dir"):
         sync_api.NewBrowser(_FakePlaywright(), from_options={"headless": True}, persistent_context=True)
+
+
+def test_launch_server_forwards_user_data_dir(monkeypatch, tmp_path):
+    import base64, json, subprocess
+    from camoufox import server
+    captured = {}
+    monkeypatch.setattr(server, "launch_options", lambda **kw: {"headless": True, "_user_data_dir": kw.get("user_data_dir")})
+    monkeypatch.setattr(server, "get_nodejs", lambda: str(tmp_path / "node"))
+    class P:
+        returncode = 0
+        def __init__(self, *a, **k):
+            import io; self.stdin = io.StringIO()
+            self.stdin.close = lambda: captured.setdefault("payload", self.stdin.getvalue())
+        def wait(self, timeout=None): captured.setdefault("payload", self.stdin.getvalue()); return 0
+        def poll(self): return 0
+    monkeypatch.setattr(subprocess, "Popen", P)
+    try:
+        server.launch_server(persistent_context=True, user_data_dir=str(tmp_path / "prof"))
+    except RuntimeError:
+        pass  # NoReturn contract: raises once the child exits
+    sent = json.loads(base64.b64decode(captured["payload"].strip()))
+    assert sent["_userDataDir"] == str(tmp_path / "prof")
+    # launchServerShared mode: without it Playwright isolates contexts per
+    # connection and clients never see the persistent default context.
+    assert sent["_sharedBrowser"] is True
