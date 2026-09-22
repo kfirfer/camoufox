@@ -20,6 +20,7 @@ from .utils import (
     async_attach_vd,
     attach_no_viewport_default,
     launch_options,
+    split_user_data_dir,
     spoofs_window_dimensions,
 )
 
@@ -118,11 +119,14 @@ async def AsyncNewBrowser(
     if persistent_context:
         if no_viewport_default and not ('viewport' in from_options or 'no_viewport' in from_options):
             from_options = {**from_options, 'no_viewport': True}
-        context = await playwright.firefox.launch_persistent_context(**from_options)
+        opts, user_data_dir = split_user_data_dir(from_options)
+        if not user_data_dir:
+            raise ValueError("persistent_context=True requires user_data_dir")
+        context = await playwright.firefox.launch_persistent_context(user_data_dir, **opts)
         return await async_attach_vd(context, virtual_display)
 
     # Browser
-    browser = await playwright.firefox.launch(**from_options)
+    browser = await playwright.firefox.launch(**split_user_data_dir(from_options)[0])
     if no_viewport_default:
         attach_no_viewport_default(browser)
     return await async_attach_vd(browser, virtual_display)

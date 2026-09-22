@@ -341,6 +341,22 @@ def _clean_locals(data: Dict[str, Any]) -> Dict[str, Any]:
     return data
 
 
+def split_user_data_dir(options: Dict[str, Any]) -> Tuple[Dict[str, Any], Optional[str]]:
+    """
+    Returns (options without any user-data-dir key, the dir or None).
+    launch_options() emits `_user_data_dir` (served as `_userDataDir` by
+    launch_server); in-process Playwright wants it as the positional
+    `user_data_dir` of launch_persistent_context() instead.
+    """
+    opts = dict(options)
+    # Pop both keys unconditionally: an `a or b` short-circuit would leave
+    # `user_data_dir` behind whenever `_user_data_dir` is set.
+    private = opts.pop("_user_data_dir", None)
+    public = opts.pop("user_data_dir", None)
+    udd = private or public
+    return opts, (str(udd) if udd else None)
+
+
 def merge_into(target: Dict[str, Any], source: Dict[str, Any]) -> None:
     """
     Merges new keys/values from the source dictionary into the target dictionary.
@@ -982,7 +998,6 @@ def launch_options(
         "env": env_vars,
         "firefox_user_prefs": firefox_user_prefs,
         "headless": headless,
-        "_user_data_dir": str(user_data_dir) if user_data_dir else None,
         **(launch_options if launch_options is not None else {}),
     }
     # Only include proxy if it's not None (Playwright 1.55+ validates this)
@@ -990,5 +1005,9 @@ def launch_options(
     # Thanks @coryking
     if proxy is not None:
         result["proxy"] = proxy
+    # fix-user-data: only surface the profile dir when one was requested, so
+    # plain `firefox.launch(**opts)` never receives an unknown kwarg.
+    if user_data_dir:
+        result["_user_data_dir"] = str(user_data_dir)
 
     return result

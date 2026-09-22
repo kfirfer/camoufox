@@ -193,11 +193,11 @@ Phases 2, 3 and 4 are independent after Phase 1. Phase 3 (the build, about 40 mi
   ```
   Expected: the first line is a tree OID (validated: `32a28c5…`), then exactly `additions/juggler/protocol/PageHandler.js`, `patches/network-patches.patch`, `patches/timezone-spoofing.patch`, then the `CONFLICT`/`Auto-merging` messages. Exit code 1 is normal when there are conflicts. If the file list differs, stop and update §2 before continuing.
 
-### [ ] Task 0.3: Test environment (prerequisite for Phases 2 and 4)
+### [X] Task 0.3: Test environment (prerequisite for Phases 2 and 4)
 
 The repo `.venv` is uv-managed and has **no `pip` and no `pytest`**. `import camoufox` currently resolves to a **non-editable site-packages 0.5.0**, so tests would silently exercise the wrong code.
 
-- [ ] **Step 1: Install pythonlib editable, plus pytest** (run *after* Task 1.1, so the editable install points at the merged 0.5.6 tree)
+- [X] **Step 1: Install pythonlib editable, plus pytest** (run *after* Task 1.1, so the editable install points at the merged 0.5.6 tree)
   ```bash
   uv pip install --python .venv/bin/python -e pythonlib "playwright<1.63" pytest
   .venv/bin/python -c "import camoufox, importlib.metadata as m; print(camoufox.__file__, m.version('camoufox'))"
@@ -323,7 +323,7 @@ The repo `.venv` is uv-managed and has **no `pip` and no `pytest`**. `import cam
 
 **Deliverable:** `launch_options()`, `Camoufox()`, `AsyncCamoufox()` and `launch_server()` all work both with and without `user_data_dir`, with regression tests.
 
-### [ ] Task 2.1: `_user_data_dir` only when set + a single translation helper
+### [X] Task 2.1: `_user_data_dir` only when set + a single translation helper
 
 **Files:**
 - Modify: `pythonlib/camoufox/utils.py` (the `launch_options` result dict, about lines 975-990 after the merge)
@@ -333,7 +333,7 @@ The repo `.venv` is uv-managed and has **no `pip` and no `pytest`**. `import cam
 **Interfaces:**
 - Produces: `camoufox.utils.split_user_data_dir(options: Dict[str, Any]) -> Tuple[Dict[str, Any], Optional[str]]`, which returns a copy of `options` without `_user_data_dir`/`user_data_dir`, plus the directory if either was present.
 
-- [ ] **Step 1: Write the failing tests**
+- [X] **Step 1: Write the failing tests**
   ```python
   # pythonlib/tests/test_user_data_dir.py
   """fix-user-data: persistent profile plumbing (F1)."""
@@ -430,12 +430,12 @@ The repo `.venv` is uv-managed and has **no `pip` and no `pytest`**. `import cam
       with pytest.raises(ValueError, match="user_data_dir"):
           sync_api.NewBrowser(_FakePlaywright(), from_options={"headless": True}, persistent_context=True)
   ```
-- [ ] **Step 2: Run and confirm they fail**
+- [X] **Step 2: Run and confirm they fail**
   ```bash
   cd pythonlib && ../.venv/bin/python -m pytest tests/test_user_data_dir.py -v
   ```
   Expected: `ImportError: cannot import name 'split_user_data_dir'`.
-- [ ] **Step 3: Implement it in `utils.py`.** Remove the unconditional `"_user_data_dir": …` entry from the `result` dict (about line 985 after the merge). Add this after the `if proxy is not None:` block:
+- [X] **Step 3: Implement it in `utils.py`.** Remove the unconditional `"_user_data_dir": …` entry from the `result` dict (about line 985 after the merge). Add this after the `if proxy is not None:` block:
   ```python
       # fix-user-data: only surface the profile dir when one was requested, so
       # plain `firefox.launch(**opts)` never receives an unknown kwarg.
@@ -459,7 +459,7 @@ The repo `.venv` is uv-managed and has **no `pip` and no `pytest`**. `import cam
       udd = private or public
       return opts, (str(udd) if udd else None)
   ```
-- [ ] **Step 4: Use it in both APIs, keeping upstream's viewport logic.** The merged `NewBrowser` already contains upstream's `no_viewport_default = spoofs_window_dimensions(from_options)` block (the Juggler deadlock fix for #666) and `attach_no_viewport_default(browser)`. **Do not rewrite the function.** Change only the two launch calls. Validated diff for `sync_api.py`:
+- [X] **Step 4: Use it in both APIs, keeping upstream's viewport logic.** The merged `NewBrowser` already contains upstream's `no_viewport_default = spoofs_window_dimensions(from_options)` block (the Juggler deadlock fix for #666) and `attach_no_viewport_default(browser)`. **Do not rewrite the function.** Change only the two launch calls. Validated diff for `sync_api.py`:
   ```diff
    from .utils import (
        attach_no_viewport_default,
@@ -486,12 +486,12 @@ The repo `.venv` is uv-managed and has **no `pip` and no `pytest`**. `import cam
            attach_no_viewport_default(browser)
   ```
   Apply the identical change to `async_api.AsyncNewBrowser`, with `await` in front of both launch calls.
-- [ ] **Step 5: Run the new tests and the whole upstream suite**
+- [X] **Step 5: Run the new tests and the whole upstream suite**
   ```bash
   cd pythonlib && ../.venv/bin/python -m pytest tests -q
   ```
   Expected with Playwright 1.58: **`177 passed, 4 skipped`** (168 upstream + the 9 tests above), and 178 once Task 2.2 appends its test. A scratch run of the same code, without `test_split_pops_both_keys_when_both_present`, gave 177 including Task 2.2. No upstream test asserts the `launch_server` rejection, so no upstream test needs changing.
-- [ ] **Step 6: Commit**
+- [X] **Step 6: Commit**
   ```bash
   git add pythonlib && git commit -m "pythonlib: emit _user_data_dir only when set; translate for in-process persistent contexts (fixes TypeError in Camoufox())"
   ```
@@ -535,7 +535,7 @@ The repo `.venv` is uv-managed and has **no `pip` and no `pytest`**. `import cam
 
 **Deliverable:** `camoufox-152.0.4-beta.30/obj-aarch64-apple-darwin/dist/Camoufox.app` built from the merged branch, with every patch applying cleanly and F3/F4 present in the compiled sources.
 
-### [ ] Task 3.1: Fetch and prepare the Firefox 152.0.4 tree
+### [/] Task 3.1: Fetch and prepare the Firefox 152.0.4 tree
 
 - [ ] **Step 1: Toolchain check**
   ```bash
