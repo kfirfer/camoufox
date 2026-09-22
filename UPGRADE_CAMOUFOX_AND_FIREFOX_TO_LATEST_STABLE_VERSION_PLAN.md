@@ -630,14 +630,14 @@ Run all tests with the repo venv **after Task 0.3**: `.venv/bin/python -m pytest
 
 **Pre-validated:** the test and implementation code for Tasks 4.1 and 4.2 in this plan was extracted verbatim and run against the merged pythonlib, giving **15 passed**. `detect_firefox_major()` on the real 146 bundle returned `146`, read from `Contents/Resources/application.ini` (`Version=146.0.1-beta.25`). The current launcher, run unmodified against merged pythonlib 0.5.6, still produced a correct config: no locale/TZ keys, `humanize` set, HTTPS AE pinned, `vision` capability.
 
-### [ ] Task 4.1: `version.py`: detect the Firefox major from the binary
+### [/] Task 4.1: `version.py`: detect the Firefox major from the binary
 
 **Files:** Create `mcp_launcher/__init__.py` (empty), `mcp_launcher/version.py`, `mcp_launcher/tests/__init__.py` (empty), `mcp_launcher/tests/test_version.py`
 
 **Interfaces:**
 - Produces: `detect_firefox_major(executable_path: str | None, default: int = DEFAULT_FIREFOX_MAJOR) -> int` and the constant `DEFAULT_FIREFOX_MAJOR = 152`.
 
-- [ ] **Step 1: Failing tests**
+- [X] **Step 1: Failing tests**
   ```python
   # mcp_launcher/tests/test_version.py
   from mcp_launcher.version import detect_firefox_major, DEFAULT_FIREFOX_MAJOR
@@ -669,8 +669,8 @@ Run all tests with the repo venv **after Task 0.3**: `.venv/bin/python -m pytest
       assert detect_firefox_major(None) == DEFAULT_FIREFOX_MAJOR
       assert detect_firefox_major(str(tmp_path / "x")) == DEFAULT_FIREFOX_MAJOR
   ```
-- [ ] **Step 2: Run the tests. Expected: `ModuleNotFoundError`.**
-- [ ] **Step 3: Implement**
+- [X] **Step 2: Run the tests. Expected: `ModuleNotFoundError`.**
+- [X] **Step 3: Implement**
   ```python
   # mcp_launcher/version.py
   """Detect the Firefox major version of a Camoufox binary.
@@ -712,9 +712,9 @@ Run all tests with the repo venv **after Task 0.3**: `.venv/bin/python -m pytest
       print(f"Warning: could not detect Firefox version of {exe}; assuming {default}.", file=sys.stderr)
       return default
   ```
-- [ ] **Step 4: Run the tests. Expected: 5 passed.**
+- [X] **Step 4: Run the tests. Expected: 5 passed.**
 - [ ] **Step 5: Verify against the real build**: `.venv/bin/python -c "from mcp_launcher.version import detect_firefox_major as d; print(d('$B152'))"`. Expected `152`. The same call on `$B146` returns `146` (validated). The bundle's `application.ini` layout (`[App]` … `Version=<full>`, plus `[Gecko] MinVersion=`/`MaxVersion=`, which the `^Version=` anchor ignores) was checked against the 146 build.
-- [ ] **Step 6: Commit** `git add mcp_launcher && git commit -m "mcp_launcher: detect Firefox major from application.ini"`
+- [X] **Step 6: Commit** `git add mcp_launcher && git commit -m "mcp_launcher: detect Firefox major from application.ini"`
 
 ### [ ] Task 4.2: `user_agent.py`, `profile.py`, `bundle.py`: extract the existing logic unchanged
 
