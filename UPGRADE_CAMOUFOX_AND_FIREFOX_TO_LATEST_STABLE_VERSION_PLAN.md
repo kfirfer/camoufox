@@ -19,7 +19,7 @@
 ## Global Constraints
 
 - Target version: `version=152.0.4`, `release=beta.30` (upstream tag `v152.0.4-beta.30`, commit `5d06ec1629ac7843508f1e683f83e404fde8db76`).
-- All work lands on branch **`fix-user-data`**. Never on `main`, never force-pushed.
+- All work lands on branch **`fix-user-data-ff-152`** (branched from `fix-user-data` at `pre-ff152-upgrade`, per the user's request on 2026-09-22). `fix-user-data` stays at `pre-ff152-upgrade` (`6aaeac1`) until the **user** merges `fix-user-data-ff-152` into it after sign-off. Never on `main`, never force-pushed.
 - **Do not remove or change the behaviour of any branch feature** listed in §1.2. Any change to how one is *implemented* must be justified here and covered by a test.
 - Upstream remote: `https://github.com/daijro/camoufox` (this repo's `origin` is the fork `kfirfer/camoufox`).
 - Build host: macOS arm64 (Darwin 27, SDK 27.0). Firefox 152 needs macOS SDK **≥ 26.4** (`build/moz.configure/toolchain.configure: mac_sdk_min_version() == "26.4"`), so this host qualifies. **Correction (2026-09-22, found in Task 3.3):** the host *default* SDK 27.0 does **not** work: its `.tbd` stubs list `arm64e.x1-macos`, which the bootstrapped clang/lld **20.1.8** rejects (`could not load TAPI file … unknown architecture`), and configure dies with `Couldn't find one that works`. The installed `MacOSX26.5.sdk` (≥ 26.4, no `arm64e.x1`, and the SDK upstream's `macos.mozconfig` uses for cross builds) works. `scripts/build-macos-native.sh` selects it via `MACOS_SDK_DIR` (the env alias of `--with-macos-sdk`; `SDKROOT` alone is ignored because configure scans xcrun's SDK dir for the *newest* SDK), keeping the Makefile clean. It also pins `RUSTC`/`CARGO` to the active toolchain's real binaries: Homebrew's rustup proxies are bash wrappers that lose `argv[0]`, so configure's `rustup which rustc` unwrap step runs rustc and fails (`multiple input filenames provided`).
@@ -1023,7 +1023,7 @@ This procedure was validated end to end against the 146 binary with merged pytho
 
 - [ ] **Step 1:** `git log --oneline pre-ff152-upgrade..HEAD` shows one merge commit plus focused follow-up commits.
 - [ ] **Step 2:** `git diff v152.0.4-beta.30 -- patches additions pythonlib` shows **only** the intended branch deltas: branding (5 files under `additions/browser/`), `PageHandler.js` **identical to upstream** (no diff), the HTTPS-only encoding override, the ucid→0 fallback, `server.py` (rejection removed + `_shared_browser`), `utils.py`/`sync_api.py`/`async_api.py` user-data-dir handling, and `test_user_data_dir.py`. Anything else is an accidental regression of upstream and must be reverted.
-- [ ] **Step 3:** Request a code review (superpowers:requesting-code-review), then `git push origin fix-user-data`.
+- [ ] **Step 3:** Request a code review (superpowers:requesting-code-review), then `git push -u origin fix-user-data-ff-152`. Do **not** merge into `fix-user-data`; the user does that after sign-off.
 - [ ] **Step 4:** Remove the old tree **only after sign-off**: `rm -rf camoufox-146.0.1-beta.25 firefox-146.0.1.source.tar.xz` (both are gitignored, about 30 GB).
 
 ---
@@ -1044,8 +1044,9 @@ This procedure was validated end to end against the 146 binary with merged pytho
 ## 8. Rollback
 
 ```bash
-git switch fix-user-data
-git reset --hard pre-ff152-upgrade          # local only; if already pushed use: git revert -m 1 <merge-sha>
+# The upgrade lives on fix-user-data-ff-152; fix-user-data is untouched until the user merges it.
+# Before that merge: nothing to undo in git (just don't merge / delete the branch).
+# After the merge into fix-user-data: git switch fix-user-data && git revert -m 1 <merge-sha>
 # restore MCP to the 146 binary (MISC.md lines at the pre-ff152-upgrade tag) and the profile backup:
 rm -rf ~/playwright-profile/profile-claude-camoufox && cp -a ~/playwright-profile/profile-claude-camoufox{.bak-146,}
 cp -p ~/.camoufox-mcp-fingerprint.json.bak-146 ~/.camoufox-mcp-fingerprint.json
