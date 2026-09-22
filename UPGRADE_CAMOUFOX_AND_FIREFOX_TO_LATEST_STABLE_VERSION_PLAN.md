@@ -905,21 +905,22 @@ Table re-verified with `npm view` on 2026-09-21. The latest release is `0.0.82`,
 
 **Deliverable:** evidence (command output) that every item in §1.2 works on the 152 build, plus green upstream test suites.
 
-### [ ] Task 5.1: Upstream automated suites
+### [/] Task 5.1: Upstream automated suites
 
-- [ ] **Step 1: pythonlib unit tests**: `cd pythonlib && ../.venv/bin/python -m pytest tests -q`. Expected: `178 passed, 4 skipped` (Playwright 1.58).
-- [ ] **Step 2: Install pythonlib into the MCP runtime venv.** The repo `.venv` was done in Task 0.3. `claude-1/.venv` currently has **camoufox 0.4.11** and ships only `pip3`, so use `uv` or `-m pip`:
+- [X] **Step 1: pythonlib unit tests**: `cd pythonlib && ../.venv/bin/python -m pytest tests -q`. Expected: `178 passed, 4 skipped` (Playwright 1.58). **Result:** `178 passed, 4 skipped` ✔
+- [X] **Step 2: Install pythonlib into the MCP runtime venv.** **Done** (camoufox 0.4.11 → 0.5.6 editable, playwright stays 1.58.0; matrix section 0 with this interpreter: `OK — 51 config keys` vs `FAIL: no CAMOU_CONFIG env` at baseline). The repo `.venv` was done in Task 0.3. `claude-1/.venv` currently has **camoufox 0.4.11** and ships only `pip3`, so use `uv` or `-m pip`:
   ```bash
   uv pip install --python /Users/dev345/code/kfirfer/claude-1/.venv/bin/python3 -e /Users/dev345/code/kfirfer/camoufox/pythonlib "playwright<1.63"
   /Users/dev345/code/kfirfer/claude-1/.venv/bin/python3 -c "import camoufox, importlib.metadata as m; print(camoufox.__file__, m.version('camoufox'))"   # .../camoufox/pythonlib/... 0.5.6
   ```
   Both venvs have Playwright **1.58**, which is below the 1.61 floor, so no browser-floor issue. Do not upgrade them past `<1.63`. This changes another project's venv (`claude-1`). Tell the user, and note the rollback in §8.
-- [ ] **Step 3: build-tester against the new binary** (`run_tests.sh` creates its own venv and runs `npm install`; the README example passes the `.app`)
+- [X] **Step 3: build-tester against the new binary** (`run_tests.sh` creates its own venv and runs `npm install`; the README example passes the `.app`)
   ```bash
   bash build-tester/run_tests.sh "$APP" --no-cert
   ```
+  **Result (2026-09-22):** branch 152 build → `OVERALL [A] 1040/1048` (run 1) and `1042/1048` (run 2); exit 1 because not every check passed. The one consistent failure, on all 6 per-context profiles, is `selfDestruct.setTimezone` ("setTimezone still present on window — self-destruct failed"). **Pristine upstream beta.30** (`~/Library/Caches/camoufox/browsers/official/152.0.4-beta.30-3b43e766`) fails the **same** check on the same 6 profiles (`[A] 1040/1048`), so it is pre-existing upstream behaviour, not a branch regression. The remaining 0–2 Linux misses vary run to run on both builds (flaky). Failures were listed with a scratch wrapper around `runner.print_profile_result`, because the runner prints totals only.
 - [ ] **Step 4: Playwright tests**: run `(cd tests && bash run-tests.sh --executable-path "$B152")`. Do not use `make tests`: its path is hard-coded to `obj-x86_64-pc-linux-gnu/dist/bin/camoufox-bin`, and the Makefile must stay clean. Record pass/fail counts, and compare failures with a run of the pristine upstream beta.30 binary before attributing them to the branch.
-- [ ] **Step 5 (optional; needs `service-tester/proxies.txt`): service-tester**, the second suite upstream's `CLAUDE.md` marks as required for PRs. It builds a wheel from `pythonlib/`, auto-detects the local macOS build, and copies `properties.json` itself: `(cd service-tester && ./run_tests.sh --binary local)`. Skip it and say so if no proxies are available.
+- [X] **Step 5 (optional; needs `service-tester/proxies.txt`): service-tester**, the second suite upstream's `CLAUDE.md` marks as required for PRs. It builds a wheel from `pythonlib/`, auto-detects the local macOS build, and copies `properties.json` itself: `(cd service-tester && ./run_tests.sh --binary local)`. Skip it and say so if no proxies are available. **Skipped:** `service-tester/proxies.txt` does not exist.
 
 ### [ ] Task 5.2: MCP end-to-end (F7, F8)
 
@@ -942,13 +943,13 @@ Table re-verified with `npm view` on 2026-09-21. The latest release is `0.0.82`,
   - No "Camoufox" string in UA, `about:` dialogs or error pages (F6).
 - [ ] **Step 3: Headed mode**: repeat with `--no-headless --showcursor`. Check that the viewport equals the window size and nothing flickers.
 
-### [ ] Task 5.3: `launch_server` persistent profile against a live browser (F1)
+### [X] Task 5.3: `launch_server` persistent profile against a live browser (F1)
 
 Prerequisite: Task 3.3 Step 3 (`properties.json` mirrored into `Contents/MacOS/`). Without it `launch_options()` raises `FileNotFoundError` (§1.3-5).
 
 This procedure was validated end to end against the 146 binary with merged pythonlib, Playwright 1.58 and `_sharedBrowser`: `contexts on connect: 1`, and cookie plus localStorage survived the restart. **Without** `_sharedBrowser`, the same run gives `contexts on connect: 0`, `b.contexts[0]` raises `IndexError`, and data written through `new_context()` is gone after the restart.
 
-- [ ] **Step 1: Server + client scripts.** The heredoc is unquoted, so `$B152` is expanded. The old `<<'EOF'` form passed the literal string `$B152` to Python.
+- [X] **Step 1: Server + client scripts.** The heredoc is unquoted, so `$B152` is expanded. The old `<<'EOF'` form passed the literal string `$B152` to Python.
   ```bash
   rm -rf /tmp/cf-ws-profile
   cat > /tmp/cf-srv.py <<EOF
@@ -969,7 +970,7 @@ This procedure was validated end to end against the 146 binary with merged pytho
       print(sys.argv[2], pg.evaluate("document.cookie"), pg.evaluate("localStorage.getItem('k')"))
   EOF
   ```
-- [ ] **Step 2: Round trip across a server restart**
+- [X] **Step 2: Round trip across a server restart**
   ```bash
   run() { (.venv/bin/python -u /tmp/cf-srv.py > /tmp/cf-srv.log 2>&1 &)
           for i in $(seq 30); do grep -q ws:// /tmp/cf-srv.log && break; sleep 1; done
@@ -979,14 +980,16 @@ This procedure was validated end to end against the 146 binary with merged pytho
   run read   # expect: read k=v v   <- persisted across a server restart
   ```
   Stopping the Python parent closes Node's stdin, and Node then closes the browser cleanly. The trailing `pkill` is only a safety net.
+  **Result (2026-09-22, 152 build):** `set k=v v` then `read k=v v` across a server restart, UA `rv:152.0 … Firefox/152.0` ✔. Harness note: a job backgrounded from a non-interactive shell **ignores SIGINT**, so `pkill -INT` leaves the `read` server running; use `pkill -TERM -f cf-srv.py` (Node sees stdin EOF and closes the browser; verified no leftover processes).
 
-### [ ] Task 5.4: Humanize (F2)
+### [X] Task 5.4: Humanize (F2)
 
-- [ ] **Step 1:** Make `test_humanize.py` take the binary from `CAMOUFOX_BINARY` (defaulting to the 152 path), then run `CAMOUFOX_BINARY="$B152" .venv/bin/python test_humanize.py`. Expected: 15/15 clicks, the cursor visibly follows curved paths, and **no hang**. The `>=` guard is exercised whenever a button spawns at the viewport edge. The script launches headed and loads `https://camoufox.com/tests/buttonclick`, so it needs a display and network access. It uses raw Playwright rather than pythonlib, so §1.3-5 does not affect it. Upstream's `pythonlib/tests/test_humanize.py` is a different file and runs in Task 5.1 Step 1.
+- [X] **Step 1:** Make `test_humanize.py` take the binary from `CAMOUFOX_BINARY` (defaulting to the 152 path), then run `CAMOUFOX_BINARY="$B152" .venv/bin/python test_humanize.py`. Expected: 15/15 clicks, the cursor visibly follows curved paths, and **no hang**. The `>=` guard is exercised whenever a button spawns at the viewport edge. The script launches headed and loads `https://camoufox.com/tests/buttonclick`, so it needs a display and network access. It uses raw Playwright rather than pythonlib, so §1.3-5 does not affect it. Upstream's `pythonlib/tests/test_humanize.py` is a different file and runs in Task 5.1 Step 1.
+  **Result (2026-09-22, 152 build):** `Click 1..15/15 done`, `Test finished.`, exit 0 in 38 s, no hang ✔. The visual "curved path" check was not observed by the agent (no screen access); the trajectory call is statically present (Task 3.4 F2-OK) and exercised by upstream's `pythonlib/tests/test_humanize.py`.
 
-### [ ] Task 5.5: Regression greps (F6 + no stale 146)
+### [X] Task 5.5: Regression greps (F6 + no stale 146)
 
-- [ ] **Step 1**
+- [X] **Step 1**
   ```bash
   APP=camoufox-152.0.4-beta.30/obj-aarch64-apple-darwin/dist/Camoufox.app
   R=$APP/Contents/Resources
@@ -998,6 +1001,7 @@ This procedure was validated end to end against the 146 binary with merged pytho
   grep -cS "Camoufox" $R/browser/localization/en-US/branding/brand.ftl $R/browser/chrome/en-US/locale/browser/appstrings.properties  # expect :0 for both
   git grep -n "146" -- launch-camoufox-mcp.py mcp_launcher test_humanize.py   # expect 0 functional hits
   ```
+  **Result (2026-09-22):** brand-leak files `0`, `-brand-short-name = Firefox` ✔, `Camoufox` count `:0` in both files ✔. Positive control `grep -rlS "Firefox can"` → 10 files, so `-S` does follow the dist symlinks and the `0` is real (note the strings use a typographic `’`, so an ASCII-apostrophe control matches nothing). `146` hits: only the two intentional stale-version fixtures in `mcp_launcher/tests/` ✔.
 
 ### [ ] Task 5.6: Re-evaluate `CAMOUFOX_FEEDBACK.md`
 

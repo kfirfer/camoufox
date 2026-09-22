@@ -8,7 +8,13 @@ import json
 import os
 from playwright.sync_api import sync_playwright
 
-BINARY = "/Users/dev345/code/kfirfer/camoufox/camoufox-146.0.1-beta.25/obj-aarch64-apple-darwin/dist/Camoufox.app/Contents/MacOS/camoufox"
+BINARY = os.environ.get(
+    "CAMOUFOX_BINARY",
+    os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "camoufox-152.0.4-beta.30/obj-aarch64-apple-darwin/dist/Camoufox.app/Contents/MacOS/camoufox",
+    ),
+)
 URL = "https://camoufox.com/tests/buttonclick"
 NUM_CLICKS = 15
 
