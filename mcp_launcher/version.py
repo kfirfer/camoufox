@@ -11,7 +11,7 @@ from typing import Optional
 
 DEFAULT_FIREFOX_MAJOR = 152
 _INI_VERSION = re.compile(r"^Version=(\d+)\.", re.MULTILINE)
-_PATH_VERSION = re.compile(r"camoufox-(\d+)\.")
+_PATH_VERSION = re.compile(r"camoufox-(\d+)")
 
 
 def _ini_candidates(exe: Path):

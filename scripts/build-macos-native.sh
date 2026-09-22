@@ -17,15 +17,17 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 if [ -z "${MACOS_SDK_DIR:-}" ]; then
-  for sdk in $(ls -d /Library/Developer/CommandLineTools/SDKs/MacOSX2[6-9].*.sdk \
-                     /Applications/Xcode*.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX2[6-9].*.sdk \
-                     2>/dev/null | sort -rV); do
+  # Newest first; read line-wise so SDK paths with spaces ("Xcode 16.app") work.
+  while IFS= read -r sdk; do
     ver=$(basename "$sdk" .sdk); ver=${ver#MacOSX}
     # >= 26.4
     if [ "$(printf '%s\n26.4\n' "$ver" | sort -V | head -1)" != "26.4" ]; then continue; fi
     if grep -q 'arm64e\.x1' "$sdk/usr/lib/libSystem.tbd" 2>/dev/null; then continue; fi
     export MACOS_SDK_DIR="$sdk"; break
-  done
+  done < <(shopt -s nullglob
+           printf '%s\n' /Library/Developer/CommandLineTools/SDKs/MacOSX2[6-9].*.sdk \
+                          /Applications/Xcode*.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX2[6-9].*.sdk \
+             | sort -rV)
 fi
 if [ -z "${MACOS_SDK_DIR:-}" ]; then
   echo "ERROR: no macOS SDK >= 26.4 without arm64e.x1 stubs found; install one or set MACOS_SDK_DIR." >&2
@@ -41,6 +43,10 @@ export PATH="$HOME/.cargo/bin:$PATH"
 # the real binary and lose argv[0], so that call runs rustc and fails with
 # "multiple input filenames provided". Plain toolchain binaries skip the unwrap.
 # mach prepends ~/.cargo/bin itself, so PATH order is not enough: pin RUSTC/CARGO.
+if ! command -v rustup >/dev/null; then
+  echo "ERROR: rustup not found on PATH (Firefox's build needs a rustup-managed toolchain)." >&2
+  exit 1
+fi
 RUST_BIN="$(dirname "$(rustup which rustc)")"
 export PATH="$RUST_BIN:$PATH" RUSTC="$RUST_BIN/rustc" CARGO="$RUST_BIN/cargo"
 echo "Using Rust toolchain in $RUST_BIN" >&2

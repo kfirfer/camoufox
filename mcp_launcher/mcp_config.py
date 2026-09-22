@@ -109,9 +109,11 @@ def write_mcp_config(path: str, config: Dict) -> None:
     launchOptions.env carries the full host environment (launch_options()
     defaults env to os.environ, and Playwright's env *replaces* the browser
     environment), so the file can contain secrets. fchmod also tightens a
-    pre-existing file that O_CREAT's mode would leave untouched.
+    pre-existing file that O_CREAT's mode would leave untouched. O_NOFOLLOW
+    refuses a pre-planted symlink (e.g. in a shared /tmp on Linux) instead of
+    truncating its target.
     """
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
     os.fchmod(fd, 0o600)
     with os.fdopen(fd, "w") as f:
         json.dump(config, f)

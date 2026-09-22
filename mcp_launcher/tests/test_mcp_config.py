@@ -26,3 +26,13 @@ def test_config_file_is_private(tmp_path):
     p = tmp_path / "c.json"; p.write_text("{}"); os.chmod(p, 0o644)
     write_mcp_config(str(p), {"browser": {"launchOptions": {"env": {"SECRET": "x"}}}})
     assert stat.S_IMODE(os.stat(p).st_mode) == 0o600 and json.loads(p.read_text())["browser"]
+def test_config_write_refuses_symlink(tmp_path):
+    # $TMPDIR/camoufox-mcp-config.json holds the host env; never follow a
+    # pre-planted symlink (shared /tmp on Linux) and truncate its target.
+    import os, pytest
+    from mcp_launcher.mcp_config import write_mcp_config
+    target = tmp_path / "victim"; target.write_text("keep")
+    link = tmp_path / "c.json"; os.symlink(target, link)
+    with pytest.raises(OSError):
+        write_mcp_config(str(link), {"x": 1})
+    assert target.read_text() == "keep"

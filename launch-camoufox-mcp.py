@@ -35,6 +35,7 @@ from browserforge.fingerprints import Screen
 from camoufox.utils import launch_options
 
 from mcp_launcher.bundle import install_properties_shim
+from mcp_launcher.fingerprint import camou_config_from_env
 from mcp_launcher.mcp_config import (
     DEFAULT_MCP_PACKAGE,
     build_mcp_args,
@@ -384,10 +385,12 @@ def main():
             raise
         # Launching without a fingerprint (no CAMOU_CONFIG_*, no humanize,
         # no UA/AE pins) is worse than not launching: fail loudly.
-        print(f"ERROR: launch_options() failed: {e!r}. Refusing to start without a fingerprint; "
-              f"re-run with CAMOUFOX_MCP_ALLOW_EMPTY_CONFIG=1 to override.", file=sys.stderr)
         if os.environ.get("CAMOUFOX_MCP_ALLOW_EMPTY_CONFIG") != "1":
+            print(f"ERROR: launch_options() failed: {e!r}. Refusing to start without a fingerprint; "
+                  f"re-run with CAMOUFOX_MCP_ALLOW_EMPTY_CONFIG=1 to override.", file=sys.stderr)
             sys.exit(2)
+        print(f"WARNING: launch_options() failed: {e!r}. Starting WITHOUT a fingerprint because "
+              f"CAMOUFOX_MCP_ALLOW_EMPTY_CONFIG=1.", file=sys.stderr)
         config = {}
     config = {k: v for k, v in config.items() if v is not None}
 
@@ -411,17 +414,18 @@ def main():
         })
     if not args.timezone:
         _save_strip_keys.add("timezone")
-    for k, v in camoufox_env.items():
-        if k.startswith("CAMOU_CONFIG") and v:
-            try:
-                fp_config = json.loads(v) if isinstance(v, str) else v
-                if _save_strip_keys:
-                    fp_config = {kk: vv for kk, vv in fp_config.items()
-                                 if kk not in _save_strip_keys}
-                _save_config(fp_config)
-            except (json.JSONDecodeError, TypeError):
-                pass
-            break
+    # The config is chunked across CAMOU_CONFIG_1..N once it passes 32767
+    # chars; reading only the first chunk would silently skip the save.
+    try:
+        fp_config = camou_config_from_env(camoufox_env)
+    except ValueError as e:
+        print(f"Warning: could not parse CAMOU_CONFIG; fingerprint not saved ({e}).", file=sys.stderr)
+        fp_config = None
+    if fp_config:
+        if _save_strip_keys:
+            fp_config = {kk: vv for kk, vv in fp_config.items()
+                         if kk not in _save_strip_keys}
+        _save_config(fp_config)
 
     # hardwareConcurrency: Camoufox now patches both Navigator and
     # WorkerNavigator (dom/workers/WorkerNavigator.cpp:268) to read from

@@ -26,3 +26,8 @@ def test_ini_wins_over_misleading_path(tmp_path):
 def test_default_when_unknown(tmp_path):
     assert detect_firefox_major(None) == DEFAULT_FIREFOX_MAJOR
     assert detect_firefox_major(str(tmp_path / "x")) == DEFAULT_FIREFOX_MAJOR
+
+def test_path_regex_without_dotted_version(tmp_path):
+    d = tmp_path / "camoufox-152" / "dist"; d.mkdir(parents=True)
+    exe = d / "camoufox"; exe.touch()
+    assert detect_firefox_major(str(exe), default=1) == 152
