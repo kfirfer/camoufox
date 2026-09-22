@@ -716,7 +716,7 @@ Run all tests with the repo venv **after Task 0.3**: `.venv/bin/python -m pytest
 - [ ] **Step 5: Verify against the real build**: `.venv/bin/python -c "from mcp_launcher.version import detect_firefox_major as d; print(d('$B152'))"`. Expected `152`. The same call on `$B146` returns `146` (validated). The bundle's `application.ini` layout (`[App]` … `Version=<full>`, plus `[Gecko] MinVersion=`/`MaxVersion=`, which the `^Version=` anchor ignores) was checked against the 146 build.
 - [X] **Step 6: Commit** `git add mcp_launcher && git commit -m "mcp_launcher: detect Firefox major from application.ini"`
 
-### [ ] Task 4.2: `user_agent.py`, `profile.py`, `bundle.py`: extract the existing logic unchanged
+### [X] Task 4.2: `user_agent.py`, `profile.py`, `bundle.py`: extract the existing logic unchanged
 
 **Files:** Create `mcp_launcher/user_agent.py`, `mcp_launcher/profile.py`, `mcp_launcher/bundle.py` and tests `mcp_launcher/tests/test_user_agent.py`, `test_profile.py`, `test_bundle.py`.
 
@@ -726,7 +726,7 @@ Run all tests with the repo venv **after Task 0.3**: `.venv/bin/python -m pytest
 - `scrub_stale_prefs(prefs_path: str, pinning_locale: bool) -> int`. Returns the number of removed lines, using the same pref list as today: `intl.accept_languages`, `intl.locale.requested`, `general.useragent.locale`.
 - `install_properties_shim() -> None`. Idempotent. Wraps `camoufox.utils._load_properties` with the `Contents/MacOS → Contents/Resources/properties.json` redirect.
 
-- [ ] **Step 1: Failing tests**
+- [X] **Step 1: Failing tests**
   ```python
   # mcp_launcher/tests/test_user_agent.py
   from mcp_launcher.user_agent import clean_user_agent, needs_ua_refresh
@@ -768,8 +768,8 @@ Run all tests with the repo venv **after Task 0.3**: `.venv/bin/python -m pytest
       install_properties_shim(); first = cu._load_properties
       install_properties_shim(); assert cu._load_properties is first
   ```
-- [ ] **Step 2: Run them. Expected: import errors.**
-- [ ] **Step 3: Implement** by moving the code **verbatim** from `launch-camoufox-mcp.py` (`_CLEAN_UA` block, prefs.js strip block, `_load_properties_macos_bundle`) into these functions. The shim must capture the original `cu._load_properties` **inside `install_properties_shim()`**, not at module import, otherwise `test_redirects_macos_bundle_to_resources` (which monkeypatches it first) cannot observe the redirect. It marks the wrapper with `_camoufox_mcp_shim = True` and returns early if `cu._load_properties` already carries that marker. `scrub_stale_prefs` keeps today's semantics: only the three locale prefs are ever stripped (the current code computes `stripping_tz` but never uses it), and a missing file or `OSError` returns 0.
+- [X] **Step 2: Run them. Expected: import errors.**
+- [X] **Step 3: Implement** by moving the code **verbatim** from `launch-camoufox-mcp.py` (`_CLEAN_UA` block, prefs.js strip block, `_load_properties_macos_bundle`) into these functions. The shim must capture the original `cu._load_properties` **inside `install_properties_shim()`**, not at module import, otherwise `test_redirects_macos_bundle_to_resources` (which monkeypatches it first) cannot observe the redirect. It marks the wrapper with `_camoufox_mcp_shim = True` and returns early if `cu._load_properties` already carries that marker. `scrub_stale_prefs` keeps today's semantics: only the three locale prefs are ever stripped (the current code computes `stripping_tz` but never uses it), and a missing file or `OSError` returns 0.
   ```python
   # mcp_launcher/user_agent.py
   import re
@@ -783,8 +783,8 @@ Run all tests with the repo venv **after Task 0.3**: `.venv/bin/python -m pytest
       m = _RV.search(saved_ua or "")
       return "Camoufox" in (saved_ua or "") or m is None or int(m.group(1)) != ff_major
   ```
-- [ ] **Step 4: Run the tests. Expected: all pass.**
-- [ ] **Step 5: Commit** `git commit -m "mcp_launcher: extract UA, prefs scrubber and macOS bundle shim"`
+- [X] **Step 4: Run the tests. Expected: all pass.**
+- [X] **Step 5: Commit** `git commit -m "mcp_launcher: extract UA, prefs scrubber and macOS bundle shim"`
 
 ### [ ] Task 4.3: `mcp_config.py` + thin CLI + `--mcp-package`
 
