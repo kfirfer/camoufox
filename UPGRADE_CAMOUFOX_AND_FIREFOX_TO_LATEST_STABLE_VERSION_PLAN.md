@@ -881,13 +881,13 @@ Run all tests with the repo venv **after Task 0.3**: `.venv/bin/python -m pytest
 - [X] **Step 6: Run all launcher tests**: `.venv/bin/python -m pytest mcp_launcher/tests -q`. Expected: all pass.
 - [X] **Step 7: Commit** `git commit -am "mcp_launcher: thin CLI over tested modules; auto-detect Firefox 152; --mcp-package; fail loudly without fingerprint"`
 
-### [ ] Task 4.4: Decide the `@playwright/mcp` version
+### [X] Task 4.4: Decide the `@playwright/mcp` version
 
 Compatibility matrix (from `npm view @playwright/mcp@<v> dependencies.playwright-core`, plus upstream `PLAYWRIGHT_BROWSER_FLOORS`):
 
 | `@playwright/mcp` | bundled Playwright | Needs Camoufox ≥ | Within pythonlib ceiling `<1.63` |
 |---|---|---|---|
-| 0.0.68 (current pin) – 0.0.69 | 1.59.0-alpha | any | yes |
+| 0.0.68 (current pin) – 0.0.69 | 1.59.0-alpha | any | yes — **0.0.68 verified on the 152 build (2026-09-22)** |
 | 0.0.70 – 0.0.74 | 1.60.0-alpha | any (upstream measured 1.60 OK on beta.29/30) | yes |
 | 0.0.75 – 0.0.76 | 1.61.0-alpha | **beta.30** | yes |
 | 0.0.77 – 0.0.78 | 1.62.0-alpha | **beta.30** | yes |
@@ -895,9 +895,9 @@ Compatibility matrix (from `npm view @playwright/mcp@<v> dependencies.playwright
 
 Table re-verified with `npm view` on 2026-09-21. The latest release is `0.0.82`, and the latest `playwright-core` is `1.63.0`. `PLAYWRIGHT_BROWSER_FLOORS` is enforced only by pythonlib and never by the MCP server's bundled Playwright. The `< 1.63` limit for MCP is a "tested Juggler protocol" limit, not something anything enforces.
 
-- [ ] **Step 1:** Run the Phase 5.2 MCP smoke test with the default `0.0.68`.
-- [ ] **Step 2:** If Juggler protocol errors show up (e.g. `Protocol error (Browser.setDefaultViewport)`, or unknown-method errors because the FF152 Juggler is newer than the 1.59 client), retry with `--mcp-package @playwright/mcp@0.0.78`, the newest version that stays inside the tested ceiling.
-- [ ] **Step 3:** Pin the version that passes in `DEFAULT_MCP_PACKAGE` and in the test, and record the result in this table.
+- [X] **Step 1:** Run the Phase 5.2 MCP smoke test with the default `0.0.68`. **Result:** `serverInfo 0.0.68`, 29 tools (vision on); navigate/evaluate/wait/screenshot/close all worked on the 152 Juggler in headless and headed mode, no protocol errors.
+- [X] **Step 2:** (not needed — no protocol errors) If Juggler protocol errors show up (e.g. `Protocol error (Browser.setDefaultViewport)`, or unknown-method errors because the FF152 Juggler is newer than the 1.59 client), retry with `--mcp-package @playwright/mcp@0.0.78`, the newest version that stays inside the tested ceiling.
+- [X] **Step 3:** Pin the version that passes in `DEFAULT_MCP_PACKAGE` and in the test, and record the result in this table. **Decision:** keep `@playwright/mcp@0.0.68` (unchanged; verified on beta.30 2026-09-22).
 
 ---
 
@@ -922,7 +922,7 @@ Table re-verified with `npm view` on 2026-09-21. The latest release is `0.0.82`,
 - [ ] **Step 4: Playwright tests**: run `(cd tests && bash run-tests.sh --executable-path "$B152")`. Do not use `make tests`: its path is hard-coded to `obj-x86_64-pc-linux-gnu/dist/bin/camoufox-bin`, and the Makefile must stay clean. Record pass/fail counts, and compare failures with a run of the pristine upstream beta.30 binary before attributing them to the branch.
 - [X] **Step 5 (optional; needs `service-tester/proxies.txt`): service-tester**, the second suite upstream's `CLAUDE.md` marks as required for PRs. It builds a wheel from `pythonlib/`, auto-detects the local macOS build, and copies `properties.json` itself: `(cd service-tester && ./run_tests.sh --binary local)`. Skip it and say so if no proxies are available. **Skipped:** `service-tester/proxies.txt` does not exist.
 
-### [ ] Task 5.2: MCP end-to-end (F7, F8)
+### [/] Task 5.2: MCP end-to-end (F7, F8)
 
 - [ ] **Step 1: Re-register the MCP server with the 152 binary** (update `MISC.md` accordingly)
   ```bash
@@ -935,13 +935,14 @@ Table re-verified with `npm view` on 2026-09-21. The latest release is `0.0.82`,
   ```
   Keep the **exact flags of the current registration**. As of 2026-09-21 that is `--no-headless --humanize --showcursor` (see `/tmp/mcp-registration-146.txt` from Task 0.1), local scope, registered for this repo directory. Only the binary path changes. Run `claude mcp remove`/`add` from `/Users/dev345/code/kfirfer/camoufox`, because local scope is per-directory.
   Back up the persistent profile first (`cp -a ~/playwright-profile/profile-claude-camoufox{,.bak-146}`). Firefox 146 → 152 migrates the profile forward, and there is no way back.
-- [ ] **Step 2:** Run all of `STEALTH_TEST_MATRIX.md` with the expectations updated to 152 (Task 6.1). Minimum pass criteria:
+- [X] **Step 2:** Run all of `STEALTH_TEST_MATRIX.md` with the expectations updated to 152 (Task 6.1). Minimum pass criteria:
+  **Result (2026-09-22), run against the 152 build through the real launcher → `@playwright/mcp@0.0.68` over stdio JSON-RPC with a scratch profile (the live registration/profile untouched pending Step 1):** UA `rv:152.0 … Firefox/152.0` in window = Worker = **ServiceWorker** and in the HTTP header ✔; HTTPS `Accept-Encoding: gzip, deflate, br, zstd` ✔ (F3); no pin → host TZ everywhere; `--timezone Asia/Singapore` → window = Worker = **ServiceWorker** = `Asia/Singapore (-480)` ✔ (F4, SW registered on `http://127.0.0.1`); cookie + localStorage survived two MCP restarts ✔ (F1/F7); no "Camoufox" in UA ✔ (F6 greps in Task 5.5). `Accept-Language: en-US,en;q=0.9` is **correct** for Firefox ≥ 147 (Bugzilla 2000765, stock `netwerk/base/rust-helper/src/lib.rs`); the matrix was updated. Pre-existing, not regressions (same on 146 or on pristine upstream beta.30): `screen.width 1440 < innerWidth 1472` with a fingerprint applied (N2), `Intl` locale `en-JP` vs `navigator.language en-US` (N1) — see `CAMOUFOX_FEEDBACK.md`.
   - `navigator.userAgent` = `… rv:152.0) Gecko/20100101 Firefox/152.0`, the same in Worker and ServiceWorker. HTTP `User-Agent` matches.
   - HTTPS `Accept-Encoding: gzip, deflate, br, zstd` (F3). br/zstd pages render (no mojibake).
   - With no `--timezone`: host TZ everywhere. With `--timezone Asia/Singapore`: Window = Worker = **ServiceWorker** = `Asia/Singapore` (F4).
   - Persistent profile: log in to a site, restart the MCP server, and confirm you are still logged in (F1/F7).
   - No "Camoufox" string in UA, `about:` dialogs or error pages (F6).
-- [ ] **Step 3: Headed mode**: repeat with `--no-headless --showcursor`. Check that the viewport equals the window size and nothing flickers.
+- [X] **Step 3: Headed mode**: repeat with `--no-headless --showcursor`. Check that the viewport equals the window size and nothing flickers. **Result:** `inner == outer == 1472×862` (= window size) ✔; flicker not observable by the agent.
 
 ### [X] Task 5.3: `launch_server` persistent profile against a live browser (F1)
 
@@ -1003,9 +1004,9 @@ This procedure was validated end to end against the 146 binary with merged pytho
   ```
   **Result (2026-09-22):** brand-leak files `0`, `-brand-short-name = Firefox` ✔, `Camoufox` count `:0` in both files ✔. Positive control `grep -rlS "Firefox can"` → 10 files, so `-S` does follow the dist symlinks and the `0` is real (note the strings use a typographic `’`, so an ASCII-apostrophe control matches nothing). `146` hits: only the two intentional stale-version fixtures in `mcp_launcher/tests/` ✔.
 
-### [ ] Task 5.6: Re-evaluate `CAMOUFOX_FEEDBACK.md`
+### [X] Task 5.6: Re-evaluate `CAMOUFOX_FEEDBACK.md`
 
-- [ ] **Step 1:** Re-run the six-site battery from `CAMOUFOX_FEEDBACK.md`: demo.fingerprint.com (P1.1, possibly fixed by `debugger-invisible-to-content.patch`), bot.incolumitas.com (P1.2), fingerprint-scan.com (P1.3), browserleaks webgl (P1.4), CreepJS (P2.1), and the Cloudflare smoke test. Record the per-item status in that file (`fixed in 152` / `still open`). Do not start fixing open items here, because they are out of scope for the upgrade.
+- [X] **Step 1:** Re-run the six-site battery from `CAMOUFOX_FEEDBACK.md`: demo.fingerprint.com (P1.1, possibly fixed by `debugger-invisible-to-content.patch`), bot.incolumitas.com (P1.2), fingerprint-scan.com (P1.3), browserleaks webgl (P1.4), CreepJS (P2.1), and the Cloudflare smoke test. Record the per-item status in that file (`fixed in 152` / `still open`). Do not start fixing open items here, because they are out of scope for the upgrade. **Result:** P1.1 fixed in 152; P1.2, P1.4, P2.1 still open; P1.3 not a defect (the site prints `new Date(0)` by design); Cloudflare smoke pass. Recorded in `CAMOUFOX_FEEDBACK.md` with new observations N1/N2.
 
 ---
 
@@ -1013,7 +1014,7 @@ This procedure was validated end to end against the 146 binary with merged pytho
 
 **Deliverable:** docs match the 152 reality, the branch is pushed, and the rollback path is documented.
 
-### [ ] Task 6.1: Update branch docs
+### [/] Task 6.1: Update branch docs
 
 - [ ] `STEALTH_TEST_MATRIX.md`: replace the 33 occurrences of `146` (paths `camoufox-146.0.1-beta.25` → `camoufox-152.0.4-beta.30`, UA `rv:146.0`/`Firefox/146.0` → `152`). Update the TLS/JA4 "Known caveat" (around line 195) and its repeat (around line 893). **152 is still long-tail**, not current: mainline Firefox is 156.0 as of 2026-09-21, four majors ahead. Say so instead of claiming parity. Replace **both** F4 greps (around lines 136 and 842). They look for `MaskConfig::GetString("timezone")` in `WorkerPrivate.cpp`, which is **absent after the merge** because that fallback now lives in `dom/base/TimezoneManager.cpp`. Use `grep -q "ucid != 0" …/dom/workers/WorkerPrivate.cpp && grep -q 'MaskConfig::GetString("timezone")' …/dom/base/TimezoneManager.cpp`.
 - [ ] `STEALTH_TEST_MATRIX.md` persistence check: in F1 checks that go through `launch_server`, clients must use `browser.contexts[0]`, not `new_context()` (§1.3-2).

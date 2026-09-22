@@ -1,7 +1,7 @@
 # Camoufox MCP — Full Stealth Test Matrix
 
 A practical, exhaustive checklist for verifying that the launcher + Camoufox
-binary produce a fingerprint indistinguishable from a real Firefox 146 / macOS
+binary produce a fingerprint indistinguishable from a real Firefox 152 / macOS
 session. Use this when changing the launcher, building a new Camoufox binary,
 or auditing before a sensitive run (e.g. LinkedIn).
 
@@ -32,9 +32,9 @@ Before running anything below.
 
 **Built Camoufox binary**:
 ```
-/Users/dev345/code/kfirfer/camoufox/camoufox-146.0.1-beta.25/obj-aarch64-apple-darwin/dist/Camoufox.app/Contents/MacOS/camoufox
+/Users/dev345/code/kfirfer/camoufox/camoufox-152.0.4-beta.30/obj-aarch64-apple-darwin/dist/Camoufox.app/Contents/MacOS/camoufox
 ```
-Built with `./mach build` in `camoufox-146.0.1-beta.25/` (dev build —
+Built with `./mach build` in `camoufox-152.0.4-beta.30/` (dev build —
 chrome resources are symlinked, no packaged `omni.ja`).
 
 **Python venv** with `playwright` and `camoufox` installed:
@@ -47,6 +47,12 @@ chrome resources are symlinked, no packaged `omni.ja`).
 /Users/dev345/playwright-profile/profile-claude-camoufox/
 ```
 
+**Persistent profile via `launch_server` (F1):** when a check goes through
+`camoufox.server.launch_server(user_data_dir=...)` instead of the MCP
+launcher, clients must use the shared persistent context
+`browser.contexts[0]` after `firefox.connect()`. Contexts made with
+`browser.new_context()` are ephemeral and never reach the profile.
+
 **Bootstrap the Playwright MCP server** in a fresh Claude Code session:
 
 ```bash
@@ -54,7 +60,7 @@ claude mcp add playwright -- \
   /Users/dev345/code/kfirfer/claude-1/.venv/bin/python3 \
   /Users/dev345/code/kfirfer/camoufox/launch-camoufox-mcp.py \
   --user-data-dir /Users/dev345/playwright-profile/profile-claude-camoufox \
-  --executable-path "/Users/dev345/code/kfirfer/camoufox/camoufox-146.0.1-beta.25/obj-aarch64-apple-darwin/dist/Camoufox.app/Contents/MacOS/camoufox" \
+  --executable-path "/Users/dev345/code/kfirfer/camoufox/camoufox-152.0.4-beta.30/obj-aarch64-apple-darwin/dist/Camoufox.app/Contents/MacOS/camoufox" \
   --no-headless \
   --humanize \
   --showcursor
@@ -81,7 +87,7 @@ Run before any browser test — catches silent-config regressions in the launche
 import sys, os, json
 sys.argv = ['launch-camoufox-mcp.py',
             '--user-data-dir', '/tmp/test-profile-smoke',
-            '--executable-path', '/Users/dev345/code/kfirfer/camoufox/camoufox-146.0.1-beta.25/obj-aarch64-apple-darwin/dist/Camoufox.app/Contents/MacOS/camoufox',
+            '--executable-path', '/Users/dev345/code/kfirfer/camoufox/camoufox-152.0.4-beta.30/obj-aarch64-apple-darwin/dist/Camoufox.app/Contents/MacOS/camoufox',
             '--no-headless', '--humanize', '--showcursor']
 
 def fake_exec(prog, args, env):
@@ -106,7 +112,7 @@ def fake_exec(prog, args, env):
         'no timezone pin': 'timezone' not in cfg,
         'no navigator.language pin': 'navigator.language' not in cfg,
         'no headers.Accept-Language pin': 'headers.Accept-Language' not in cfg,
-        'navigator.userAgent has Firefox/146.0': 'Firefox/146.0' in cfg.get('navigator.userAgent',''),
+        'navigator.userAgent has Firefox/152.0': 'Firefox/152.0' in cfg.get('navigator.userAgent',''),
         'navigator.userAgent has NO Camoufox': 'Camoufox' not in cfg.get('navigator.userAgent',''),
         'headers.Accept-Encoding full set': cfg.get('headers.Accept-Encoding') == 'gzip, deflate, br, zstd',
     }
@@ -115,7 +121,8 @@ def fake_exec(prog, args, env):
         print('FAIL:'); [print('  ✗', k) for k in bad]; sys.exit(1)
     print(f'OK — {len(cfg)} config keys, all checks pass')
 os.execvpe = fake_exec
-exec(open('/Users/dev345/code/kfirfer/camoufox/launch-camoufox-mcp.py').read())
+# run_path (not exec) so the launcher's __file__-relative `mcp_launcher` import works
+import runpy; runpy.run_path('/Users/dev345/code/kfirfer/camoufox/launch-camoufox-mcp.py', run_name='__main__')
 "
 ```
 
@@ -124,16 +131,19 @@ patched:
 
 ```bash
 echo "=== binary mtime ==="
-ls -la /Users/dev345/code/kfirfer/camoufox/camoufox-146.0.1-beta.25/obj-aarch64-apple-darwin/dist/Camoufox.app/Contents/MacOS/camoufox
+ls -la /Users/dev345/code/kfirfer/camoufox/camoufox-152.0.4-beta.30/obj-aarch64-apple-darwin/dist/Camoufox.app/Contents/MacOS/camoufox
 
 echo "=== error-string rebrand (must say Firefox, not Camoufox) ==="
-grep -c "Firefox can't establish" /Users/dev345/code/kfirfer/camoufox/camoufox-146.0.1-beta.25/obj-aarch64-apple-darwin/dist/Camoufox.app/Contents/Resources/browser/chrome/en-US/locale/browser/appstrings.properties
+# The string uses a typographic apostrophe (can’t), so match any char there; expect 1
+grep -c "Firefox can.t establish" /Users/dev345/code/kfirfer/camoufox/camoufox-152.0.4-beta.30/obj-aarch64-apple-darwin/dist/Camoufox.app/Contents/Resources/browser/chrome/en-US/locale/browser/appstrings.properties
 
 echo "=== Accept-Encoding C++ fix present ==="
-grep -A2 "else if (isSecure)" /Users/dev345/code/kfirfer/camoufox/camoufox-146.0.1-beta.25/netwerk/protocol/http/nsHttpHandler.cpp | grep MaskConfig
+grep -A2 "else if (isSecure)" /Users/dev345/code/kfirfer/camoufox/camoufox-152.0.4-beta.30/netwerk/protocol/http/nsHttpHandler.cpp | grep MaskConfig
 
 echo "=== ServiceWorker timezone fallback present ==="
-grep -c "TimezoneManager(ucid) → TimezoneManager(0) → MaskConfig\|MaskConfig::GetString..timezone" /Users/dev345/code/kfirfer/camoufox/camoufox-146.0.1-beta.25/dom/workers/WorkerPrivate.cpp
+# ucid→0 fallback lives in WorkerPrivate.cpp; the MaskConfig "timezone" fallback
+# moved into TimezoneManager::GetTimezone() upstream (beta.30). Expect: OK
+grep -q "ucid != 0" /Users/dev345/code/kfirfer/camoufox/camoufox-152.0.4-beta.30/dom/workers/WorkerPrivate.cpp && grep -q 'MaskConfig::GetString("timezone")' /Users/dev345/code/kfirfer/camoufox/camoufox-152.0.4-beta.30/dom/base/TimezoneManager.cpp && echo OK
 ```
 
 ---
@@ -148,27 +158,27 @@ grep -c "TimezoneManager(ucid) → TimezoneManager(0) → MaskConfig\|MaskConfig
 | What | Server echoes the exact headers our browser sent |
 | Why | Headers are the first thing every CDN / WAF / anti-bot service inspects |
 
-Expected values (real Firefox 146 on macOS):
+Expected values (real Firefox 152 on macOS):
 
 ```json
 {
   "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
   "Accept-Encoding": "gzip, deflate, br, zstd",
-  "Accept-Language": "en-SG,en;q=0.5",
+  "Accept-Language": "en-SG,en;q=0.9",
   "Priority": "u=0, i",
   "Sec-Fetch-Dest": "document",
   "Sec-Fetch-Mode": "navigate",
   "Sec-Fetch-Site": "none",
   "Sec-Fetch-User": "?1",
   "Upgrade-Insecure-Requests": "1",
-  "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:146.0) Gecko/20100101 Firefox/146.0"
+  "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:152.0) Gecko/20100101 Firefox/152.0"
 }
 ```
 
 Pass criteria (all must be true):
 - `Accept-Encoding` contains all four of `gzip, deflate, br, zstd` (no missing `br` or `zstd`)
-- `Accept-Language` matches the spoofed locale exactly, uses Firefox's `q=0.5` (not Chrome's `q=0.9`)
-- `Priority` header present (Firefox 146 only; missing = Chrome-style stack)
+- `Accept-Language` matches the spoofed locale exactly, with **Firefox ≥ 147 q-values**: `q=0.9, 0.8, …` (Bugzilla 2000765 made Firefox 147+ match Chrome's decrements; stock FF152 code is `netwerk/base/rust-helper/src/lib.rs`). On a `Firefox/152` UA, the old `q=0.5` style would itself be a version tell.
+- `Priority` header present (modern Firefox; missing = Chrome-style stack)
 - `User-Agent` contains NO `Camoufox`, NO `HeadlessChrome`, NO `PhantomJS`
 - `Sec-Fetch-*` headers present for navigations
 - NO `sec-ch-ua*` client-hint headers (Firefox doesn't send those — Chrome does)
@@ -183,16 +193,16 @@ Pass criteria (all must be true):
 | What | The TLS ClientHello fingerprint (cipher suites, extensions, supported_groups, ALPN, GREASE) |
 | Why | LinkedIn / Cloudflare / Akamai / DataDome inspect TLS *before* any JS runs. A Firefox UA over a non-Firefox TLS stack is an immediate flag. |
 
-Expected: JA3 and JA4 hashes should match a stock Firefox 146 macOS profile. The peet.ws JSON `tls.ja3` and `tls.ja4` strings should look like Firefox patterns (e.g. JA4 starts with `t13d` for TLS 1.3 over TCP).
+Expected: JA3 and JA4 hashes should match a stock Firefox 152 macOS profile. The peet.ws JSON `tls.ja3` and `tls.ja4` strings should look like Firefox patterns (e.g. JA4 starts with `t13d` for TLS 1.3 over TCP).
 
 Pass criteria:
 - `tls.peet.ws` `tls.client_random` non-zero, ja4 starts with `t13d`
-- Cipher suite count is the Firefox-typical value (currently ~15 for Fx146)
+- Cipher suite count is the Firefox-typical value (~15 for Fx146; re-baseline for Fx152)
 - ALPN list is `h2,http/1.1` in Firefox order
 - No JA3 mismatch warning at `browserleaks.com/ssl`
 - HTTP/2 fingerprint shows Firefox-typical SETTINGS frame (not Chrome's)
 
-Known caveat: real macOS Firefox users today are running 150+. Our Camoufox is on 146. So even a perfect Fx146 TLS hash is now in the "long tail" of real traffic and may itself look slightly unusual to ML-based detectors.
+Known caveat: mainline Firefox stable is 156.0 (as of 2026-09-21) and our Camoufox is on 152.0.4, **four majors behind**. No Camoufox build exists for 153–156, so this cannot be closed without an upstream rebase. Even a perfect Fx152 TLS hash is in the "long tail" of real traffic and may itself look slightly unusual to ML-based detectors. Do not claim parity with current Firefox.
 
 ### 1.C — WebRTC IP leak
 
@@ -260,10 +270,10 @@ Snippet:
 })
 ```
 
-Expected (Firefox 146 macOS / Singapore):
+Expected (Firefox 152 macOS / Singapore pin):
 ```jsonc
 {
-  "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:146.0) Gecko/20100101 Firefox/146.0",
+  "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:152.0) Gecko/20100101 Firefox/152.0",
   "appVersion": "5.0 (Macintosh)",          // Firefox-style short form, NOT the full UA minus Mozilla
   "appCodeName": "Mozilla",
   "appName": "Netscape",
@@ -373,7 +383,7 @@ ServiceWorkerGlobalScope:
   lang/timezone: en-SG (1 US dollar) | Asia/Singapore (-480)   ← must match main timezone
   device: cores: 8, Mac (MacIntel), macOS Catalina
   GPU: Apple, Apple M1, or similar
-  userAgent: Mozilla/5.0 … Firefox/146.0
+  userAgent: Mozilla/5.0 … Firefox/152.0
 ```
 
 Pass: ServiceWorker timezone identical to main. (Pre-fix, this leaked the
@@ -512,7 +522,7 @@ Pass (Singapore default):
 
 ### 6.B — Headers locale
 
-Verified in 1.A: `Accept-Language: en-SG,en;q=0.5`.
+Verified in 1.A: `Accept-Language: en-SG,en;q=0.9` (Firefox ≥ 147 q-values).
 
 ### 6.C — IP vs timezone consistency
 
@@ -655,7 +665,7 @@ exposes both, so if our spoof reports a UA of Firefox but exposes
 })
 ```
 
-Pass (Firefox 146 default):
+Pass (Firefox 152 default):
 - `pluginsLength: 5` (PDF Viewer + variants)
 - `mimeLength: 2` (application/pdf, text/pdf)
 - `PluginArray`, `MimeTypeArray` types (not generic Array)
@@ -740,7 +750,7 @@ Run in this order. Each takes 5-15s. Total: ~5 minutes for the full suite.
 | `https://pixelscan.net/fingerprint-check` | Detailed fingerprint quality scoring | High consistency score |
 | `https://bot-detector.rebrowser.net/` | Rebrowser's own probes: dummyFn, sourceUrlLeak, mainWorldExecution, runtimeEnableLeak, exposeFunctionLeak, pwInitScripts, navigatorWebdriver, viewport, bypassCsp | All triggered tests 🟢 green |
 | `https://infosimples.github.io/detect-headless/` | 16 legacy probes including plugin/mime/lang counts, broken-image dims, outer-dim presence | All "Headful". `Time Elapse` is a Playwright artifact (alert auto-dismiss timing) — ignore |
-| `https://browserleaks.com/javascript` | Comprehensive JS-side dump | Compare against real Firefox 146 baseline |
+| `https://browserleaks.com/javascript` | Comprehensive JS-side dump | Compare against real Firefox 152 baseline |
 
 ### 13.2 Specific-signal deep dives
 
@@ -830,16 +840,16 @@ Verify the binary's resources don't leak the brand string:
 
 ```bash
 # Should return empty — no Camoufox-branded user-visible strings in chrome resources
-grep -rln "Camoufox" /Users/dev345/code/kfirfer/camoufox/camoufox-146.0.1-beta.25/obj-aarch64-apple-darwin/dist/Camoufox.app/Contents/Resources/browser/chrome/ /Users/dev345/code/kfirfer/camoufox/camoufox-146.0.1-beta.25/obj-aarch64-apple-darwin/dist/Camoufox.app/Contents/Resources/browser/localization/
+grep -rln "Camoufox" /Users/dev345/code/kfirfer/camoufox/camoufox-152.0.4-beta.30/obj-aarch64-apple-darwin/dist/Camoufox.app/Contents/Resources/browser/chrome/ /Users/dev345/code/kfirfer/camoufox/camoufox-152.0.4-beta.30/obj-aarch64-apple-darwin/dist/Camoufox.app/Contents/Resources/browser/localization/
 
 # Expected residuals only — InfoPlist (macOS Dock name), buildconfig (chrome URL), AppConstants (chrome JS only). NOT web-reachable.
-grep -rln "Camoufox" /Users/dev345/code/kfirfer/camoufox/camoufox-146.0.1-beta.25/obj-aarch64-apple-darwin/dist/Camoufox.app/Contents/Resources/ | grep -v "^$"
+grep -rln "Camoufox" /Users/dev345/code/kfirfer/camoufox/camoufox-152.0.4-beta.30/obj-aarch64-apple-darwin/dist/Camoufox.app/Contents/Resources/ | grep -v "^$"
 
 # Verify the Accept-Encoding C++ fix (PR #474 shape)
-sed -n '2113,2135p' /Users/dev345/code/kfirfer/camoufox/camoufox-146.0.1-beta.25/netwerk/protocol/http/nsHttpHandler.cpp | grep -q "else if (isSecure)" && grep -q "MaskConfig::GetString" <(sed -n '2113,2135p' /Users/dev345/code/kfirfer/camoufox/camoufox-146.0.1-beta.25/netwerk/protocol/http/nsHttpHandler.cpp) && echo "✓ Accept-Encoding patch in place"
+grep -A4 "else if (isSecure)" /Users/dev345/code/kfirfer/camoufox/camoufox-152.0.4-beta.30/netwerk/protocol/http/nsHttpHandler.cpp | grep -q MaskConfig && echo "✓ Accept-Encoding patch in place"
 
 # Verify the ServiceWorker timezone fallback
-grep -q 'MaskConfig::GetString."timezone"' /Users/dev345/code/kfirfer/camoufox/camoufox-146.0.1-beta.25/dom/workers/WorkerPrivate.cpp && echo "✓ SW timezone fallback in place"
+grep -q "ucid != 0" /Users/dev345/code/kfirfer/camoufox/camoufox-152.0.4-beta.30/dom/workers/WorkerPrivate.cpp && grep -q 'MaskConfig::GetString("timezone")' /Users/dev345/code/kfirfer/camoufox/camoufox-152.0.4-beta.30/dom/base/TimezoneManager.cpp && echo "✓ SW timezone fallback in place"
 ```
 
 ---
@@ -889,9 +899,10 @@ them so they're not "discovered" mid-incident.
   Fixing this means setting screen dimensions and DPR together; we'd
   need to look up the right combination. Probably matters for some
   fingerprinters.
-- **TLS fingerprint is Firefox 146.** Real-world Firefox is now 150+.
-  Even a perfectly-imitated Fx146 JA3/JA4 is in the long tail of real
-  traffic by 2026. Mitigation: upgrade the Camoufox build base.
+- **TLS fingerprint is Firefox 152.** Mainline Firefox is 156.0 (as of
+  2026-09-21), four majors ahead. Even a perfectly-imitated Fx152 JA3/JA4
+  is in the long tail of real traffic. Mitigation: track the next upstream
+  Camoufox rebase (no Camoufox build exists for 153–156 yet).
 - **No `webrtc:ipv4/ipv6` spoofing** — we use `block_webrtc=True` which
   removes the WebRTC vector entirely. A real Firefox user with a real
   ISP allows WebRTC; blocked WebRTC is itself an anomaly (matches
@@ -902,7 +913,7 @@ them so they're not "discovered" mid-incident.
 - **macOS Catalina (10.15)** is what we claim via `oscpu`. Firefox UA
   reduction freezes this for all macOS users, but if you cross-check
   with `userAgentData` (Chromium-only API) or Sec-CH-UA, you'd see
-  newer Macs there. Firefox 146 doesn't expose those, so we're fine.
+  newer Macs there. Firefox 152 doesn't expose those, so we're fine.
 - **Speech voices count 72** matches a real macOS install, but the
   *exact* voice list (which 72 voices) is fingerprintable. Camoufox
   defaults to a synthetic list — match it to your spoofed locale if
@@ -948,7 +959,7 @@ Section 14.A will surface this. Root causes, in order of likelihood:
 1. A stale `Camoufox.app` is being launched — check `--executable-path`
    resolves to the freshly-built binary (compare mtime).
 2. The chrome resource symlink target wasn't edited. Verify
-   `camoufox-146.0.1-beta.25/browser/locales/en-US/chrome/overrides/appstrings.properties`
+   `camoufox-152.0.4-beta.30/browser/locales/en-US/chrome/overrides/appstrings.properties`
    says `Firefox can't establish a connection…` (not `Camoufox`).
 3. A release-style `omni.ja` was produced (`./mach build stage-package`
    was run). The dev symlinks are overridden by the archive. Either
@@ -969,7 +980,7 @@ Section 14.A will surface this. Root causes, in order of likelihood:
 The C++ ServiceWorker timezone fallback patch in `WorkerPrivate.cpp`
 isn't compiled in. Verify the file contains
 `MaskConfig::GetString("timezone")` (section 0 has the grep check), then
-rebuild with `./mach build` in `camoufox-146.0.1-beta.25/`.
+rebuild with `./mach build` in `camoufox-152.0.4-beta.30/`.
 
 ### 17.6 Accept-Encoding shows `gzip, deflate` only (missing `br, zstd`)
 
@@ -983,11 +994,11 @@ outside it. Section 0 has the grep check. Apply the patch, then
 ## Appendix A — Quick reference: known-good values
 
 If a check returns one of these values for our current setup (Camoufox
-146.0.1-beta.25 + this launcher + Singapore defaults), it's expected.
+152.0.4-beta.30 + this launcher + Singapore pin), it's expected.
 
 | Field | Value |
 |---|---|
-| `navigator.userAgent` | `Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:146.0) Gecko/20100101 Firefox/146.0` |
+| `navigator.userAgent` | `Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:152.0) Gecko/20100101 Firefox/152.0` |
 | `navigator.appVersion` | `5.0 (Macintosh)` |
 | `navigator.oscpu` | `Intel Mac OS X 10.15` |
 | `navigator.platform` | `MacIntel` |
@@ -1011,7 +1022,7 @@ If a check returns one of these values for our current setup (Camoufox
 | `screen.colorDepth` | `30` |
 | `window.devicePixelRatio` | `1` (see open questions) |
 | `Accept-Encoding` header | `gzip, deflate, br, zstd` |
-| `Accept-Language` header | (Firefox derives from host locale; e.g. `en-US,en;q=0.5`) |
+| `Accept-Language` header | (Firefox derives from host locale; e.g. `en-US,en;q=0.9` on Firefox ≥ 147) |
 | `Priority` header | `u=0, i` |
 | WebGL `UNMASKED_RENDERER` | `Apple M1, or similar` (BrowserForge picks one) |
 | Speech `local` voices | `72` (Mac default) |

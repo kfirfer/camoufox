@@ -12,6 +12,31 @@ Test environment (reproduces every issue below):
 
 ---
 
+## Status on Camoufox 152.0.4-beta.30 (re-run 2026-09-22)
+
+Re-run of the six-site battery below with the `fix-user-data-ff-152` branch build
+(`camoufox-152.0.4-beta.30`, native macOS arm64) through the production MCP path
+(`launch-camoufox-mcp.py --no-headless --humanize --showcursor` → `@playwright/mcp@0.0.68`),
+fresh scratch profile, no locale/TZ pin. The original report above was against stock
+Playwright-Firefox 146, not Camoufox.
+
+| Item | 152 result | Status |
+|---|---|---|
+| P1.1 Developer Tools | `Developer Tools: Not detected`, `Bot: Not detected`, `Suspect Score: 0` | **fixed in 152** (upstream `debugger-invisible-to-content.patch`) |
+| P1.2 `intoli.webDriverAdvanced` | `"webDriverAdvanced": "FAIL"` (all other Intoli rows `OK`). `<html>` carries only `lang`, so the check is not an attribute leak | **still open** |
+| P1.3 epoch `toLocaleString()` | **Not a bug.** fingerprint-scan's "Locale String Epoch" row is deliberately `new Date(0).toLocaleString()` (`1970/01/01, 8:00:00`: Asia/Ho_Chi_Minh was UTC+8 in 1970). Wall-clock `new Date().toLocaleString()` is current | **not a defect** (misread in the original report) |
+| P1.4 WebGL vendor/renderer | `ATI Technologies Inc.` / `Radeon R9 200 Series, or similar` (browserleaks + direct probe) | **still open** (note: the launcher reuses the saved identity in `~/.camoufox-mcp-fingerprint.json`) |
+| P2.1 CreepJS `like-headless` | `6% like headless`, `0% headless`, `0% stealth` | **still open** |
+| Cloudflare smoke (planetminecraft sign-in) | Login page served, no challenge | **pass** |
+
+New observations from the same runs (both reproduce on **pristine upstream beta.30**, so they are not branch regressions):
+
+- **N1: `Intl` default locale follows the macOS region, not `navigator.language`.** Host `AppleLocale=en_JP`: on 152, `Intl.DateTimeFormat().resolvedOptions().locale == "en-JP"` (dates render `2026/09/22, 9:31:14`) while `navigator.language == "en-US"`. On 146 it was `"en"` (`9/22/2026, 9:31:12 AM`). The mismatch is detectable.
+- **N2: screen narrower than the window.** With a fingerprint applied, BrowserForge picks e.g. `screen 1440×900` while the launcher's fixed window is `1472×862`, so `innerWidth > screen.width`. This was latent before: the live MCP venv (camoufox 0.4.11) silently ran **without** a fingerprint.
+- Accept-Language `en-US,en;q=0.9` is **correct** for Firefox ≥ 147 (Bugzilla 2000765 switched to Chrome-style q-values); `q=0.5` would be the tell on a `Firefox/152` UA.
+
+---
+
 ## Priority 1 — Real automation tells (must fix for production stealth)
 
 ### P1.1 — Fingerprint Pro detects **`Developer Tools = Yes`** even when Bot = Not Detected
