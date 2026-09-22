@@ -786,7 +786,7 @@ Run all tests with the repo venv **after Task 0.3**: `.venv/bin/python -m pytest
 - [X] **Step 4: Run the tests. Expected: all pass.**
 - [X] **Step 5: Commit** `git commit -m "mcp_launcher: extract UA, prefs scrubber and macOS bundle shim"`
 
-### [ ] Task 4.3: `mcp_config.py` + thin CLI + `--mcp-package`
+### [/] Task 4.3: `mcp_config.py` + thin CLI + `--mcp-package`
 
 **Files:** Create `mcp_launcher/mcp_config.py`, `mcp_launcher/tests/test_mcp_config.py`. Modify `launch-camoufox-mcp.py`.
 
@@ -796,7 +796,7 @@ Run all tests with the repo venv **after Task 0.3**: `.venv/bin/python -m pytest
 - `build_mcp_args(config_file: str, window_size: tuple[int, int] | None, mcp_package: str = DEFAULT_MCP_PACKAGE) -> list[str]`. Returns `["npx", mcp_package, "--config", config_file]`, plus `["--viewport-size", "WxH"]` in headed mode. Today this list is built inline at the end of `main()`, and the headed-mode fix depends on it.
 - `write_mcp_config(path: str, config: dict) -> None`. Writes JSON with mode **`0600`** (`os.open(path, O_WRONLY|O_CREAT|O_TRUNC, 0o600)` + `os.fchmod(fd, 0o600)`, so an existing 0644 file is tightened too). This addresses §1.3-6: the file contains the full host environment.
 
-- [ ] **Step 1: Failing tests**
+- [X] **Step 1: Failing tests**
   ```python
   # mcp_launcher/tests/test_mcp_config.py
   from mcp_launcher.mcp_config import build_mcp_config, DEFAULT_MCP_PACKAGE
@@ -828,9 +828,9 @@ Run all tests with the repo venv **after Task 0.3**: `.venv/bin/python -m pytest
       write_mcp_config(str(p), {"browser": {"launchOptions": {"env": {"SECRET": "x"}}}})
       assert stat.S_IMODE(os.stat(p).st_mode) == 0o600 and json.loads(p.read_text())["browser"]
   ```
-- [ ] **Step 2: Run. Expected: import error.**
-- [ ] **Step 3: Implement `build_mcp_config`, `build_mcp_args`, `write_mcp_config`** by moving the dict-building and arg-building code verbatim from the current `main()`. Keep `FINGERPRINT_CONFIG_PATH` (`~/.camoufox-mcp-fingerprint.json`) and the load/save and strip-on-save logic in the CLI, unchanged.
-- [ ] **Step 4: Rewrite `launch-camoufox-mcp.py` as wiring only.** Keep **every existing flag with the same name, default and help**, and add:
+- [X] **Step 2: Run. Expected: import error.**
+- [X] **Step 3: Implement `build_mcp_config`, `build_mcp_args`, `write_mcp_config`** by moving the dict-building and arg-building code verbatim from the current `main()`. Keep `FINGERPRINT_CONFIG_PATH` (`~/.camoufox-mcp-fingerprint.json`) and the load/save and strip-on-save logic in the CLI, unchanged.
+- [X] **Step 4: Rewrite `launch-camoufox-mcp.py` as wiring only.** Keep **every existing flag with the same name, default and help**, and add:
   ```python
   parser.add_argument("--mcp-package", default=DEFAULT_MCP_PACKAGE,
       help="npm spec for the Playwright MCP server (default: %(default)s). "
@@ -876,8 +876,8 @@ Run all tests with the repo venv **after Task 0.3**: `.venv/bin/python -m pytest
   diff <(COLUMNS=100 .venv/bin/python launch-camoufox-mcp.py --help) /tmp/launcher-help-146.txt   # only the new --mcp-package lines differ
   ```
   Everything except the `0600` assertion was validated against the current launcher on merged 0.5.6, which printed `rv:146.0` because the 146 binary was used. The first run in a fresh `HOME` downloads the default uBO addon, so it needs network access.
-- [ ] **Step 6: Run all launcher tests**: `.venv/bin/python -m pytest mcp_launcher/tests -q`. Expected: all pass.
-- [ ] **Step 7: Commit** `git commit -am "mcp_launcher: thin CLI over tested modules; auto-detect Firefox 152; --mcp-package; fail loudly without fingerprint"`
+- [X] **Step 6: Run all launcher tests**: `.venv/bin/python -m pytest mcp_launcher/tests -q`. Expected: all pass.
+- [X] **Step 7: Commit** `git commit -am "mcp_launcher: thin CLI over tested modules; auto-detect Firefox 152; --mcp-package; fail loudly without fingerprint"`
 
 ### [ ] Task 4.4: Decide the `@playwright/mcp` version
 

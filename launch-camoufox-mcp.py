@@ -24,37 +24,31 @@ import json
 import os
 import pathlib
 import platform
-import re
 import sys
 import tempfile
 
+# The mcp_launcher package sits next to this script; Claude Code invokes the
+# script by absolute path from any cwd.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+
 from browserforge.fingerprints import Screen
-import camoufox.utils as _camoufox_utils
 from camoufox.utils import launch_options
 
+from mcp_launcher.bundle import install_properties_shim
+from mcp_launcher.mcp_config import (
+    DEFAULT_MCP_PACKAGE,
+    build_mcp_args,
+    build_mcp_config,
+    write_mcp_config,
+)
+from mcp_launcher.profile import scrub_stale_prefs
+from mcp_launcher.user_agent import CLEAN_APP_VERSION, clean_user_agent, needs_ua_refresh
+from mcp_launcher.version import detect_firefox_major
 
-# WORKAROUND: camoufox.utils._load_properties() looks for `properties.json`
-# next to the executable (`<executable_dir>/properties.json`).  On macOS,
-# Camoufox is built as an app bundle where the executable lives in
-# `Camoufox.app/Contents/MacOS/` but `properties.json` is shipped in
-# `Camoufox.app/Contents/Resources/`.  When a custom --executable-path
-# pointing inside Contents/MacOS/ is passed, _load_properties() raises
-# FileNotFoundError, launch_options() fails, and the script falls back to
-# an empty config — silently dropping humanize/showcursor and the full
-# BrowserForge fingerprint.  Redirect the lookup to the Resources/ dir
-# so launch_options() succeeds and CAMOU_CONFIG_* env vars are populated.
-_orig_load_properties = _camoufox_utils._load_properties
 
-def _load_properties_macos_bundle(path=None):
-    if path:
-        p = pathlib.Path(str(path))
-        if p.parent.name == "MacOS" and p.parent.parent.name == "Contents":
-            resources_props = p.parent.parent / "Resources" / "properties.json"
-            if resources_props.exists():
-                path = resources_props
-    return _orig_load_properties(path=path)
-
-_camoufox_utils._load_properties = _load_properties_macos_bundle
+# WORKAROUND: on macOS, properties.json lives in Contents/Resources/, not next
+# to the executable; see mcp_launcher/bundle.py.
+install_properties_shim()
 
 
 # Persistent fingerprint config path — reusing the same config across sessions
@@ -176,6 +170,12 @@ def main():
              "value for the current host (8 on Apple Silicon).  Camoufox patches "
              "WorkerNavigator too, so main and worker stay consistent.",
     )
+    parser.add_argument(
+        "--mcp-package",
+        default=DEFAULT_MCP_PACKAGE,
+        help="npm spec for the Playwright MCP server (default: %(default)s). "
+             "Must bundle Playwright < 1.63 (i.e. @playwright/mcp <= 0.0.78).",
+    )
     args = parser.parse_args()
 
     user_data_dir = args.user_data_dir
@@ -184,52 +184,23 @@ def main():
     if persistent:
         os.makedirs(user_data_dir, exist_ok=True)
 
-        # Strip stale locale/timezone user prefs from the persistent profile's
-        # prefs.js when those domains aren't being pinned this session.  Firefox
-        # writes these on every shutdown when a spoof was active, and they
-        # then override our MaskConfig-level behavior on the next launch even
-        # after we've stopped pinning — exactly the symptom that bit when
-        # this knob first flipped (Accept-Language kept reporting en-SG long
-        # after `--locale-language` was removed).  prefs.js writes themselves
-        # are atomic per-line, so a targeted regex strip is safe.
-        prefs_path = os.path.join(user_data_dir, "prefs.js")
-        if os.path.exists(prefs_path):
-            stale_pref_names = []
-            stripping_locale = not (args.locale_language and args.locale_region)
-            stripping_tz = not args.timezone
-            if stripping_locale:
-                stale_pref_names += [
-                    "intl.accept_languages",
-                    "intl.locale.requested",
-                    "general.useragent.locale",
-                ]
-            try:
-                with open(prefs_path, "r") as _f:
-                    _lines = _f.readlines()
-                _kept = [
-                    line for line in _lines
-                    if not any(
-                        line.startswith(f'user_pref("{name}"')
-                        for name in stale_pref_names
-                    )
-                ]
-                if len(_kept) != len(_lines):
-                    with open(prefs_path, "w") as _f:
-                        _f.writelines(_kept)
-            except (IOError, OSError):
-                pass
+        # Strip stale locale user prefs from the persistent profile's prefs.js
+        # when locale isn't being pinned this session.  Firefox writes these on
+        # every shutdown when a spoof was active, and they then override our
+        # MaskConfig-level behavior on the next launch even after we've stopped
+        # pinning (Accept-Language kept reporting en-SG long after
+        # `--locale-language` was removed).
+        scrub_stale_prefs(
+            os.path.join(user_data_dir, "prefs.js"),
+            pinning_locale=bool(args.locale_language and args.locale_region),
+        )
 
-    # Detect Firefox major version from the executable path (e.g. "camoufox-146-..."
-    # → 146).  Used to derive a version-matched UA so the spoofed UA stays in
-    # sync with the actual Firefox engine.  Without this, upgrading the binary
-    # to a newer Camoufox/Firefox would silently leave a stale Firefox/146.0 UA
-    # claim while the engine reports newer feature support — a strong bot
-    # signal (UA-vs-engine mismatch).
-    ff_version = 146  # default
-    if args.executable_path:
-        match = re.search(r'camoufox-(\d+)', args.executable_path)
-        if match:
-            ff_version = int(match.group(1))
+    # Detect the Firefox major version of the binary (application.ini, then
+    # the path, then a default).  Used to derive a version-matched UA so the
+    # spoofed UA stays in sync with the actual Firefox engine.  A stale
+    # Firefox/<old> UA claim on a newer engine is a strong bot signal
+    # (UA-vs-engine mismatch).
+    ff_version = detect_firefox_major(args.executable_path)
 
     # Load saved fingerprint config for cross-session consistency
     saved_config = _load_saved_config()
@@ -272,39 +243,19 @@ def main():
     user_config = dict(saved_config) if saved_config else {}
     user_config["navigator.hardwareConcurrency"] = worker_hw_concurrency
 
-    # FIX: Camoufox leaks its identity in the User-Agent string
-    # (e.g. "Mozilla/5.0 (...) Gecko/20100101 Camoufox/146.0.1-beta.25").  This
-    # is a one-line giveaway for any anti-bot system doing UA substring checks.
-    # Override with a clean stock Firefox macOS UA, derived from the detected
-    # ff_version so a Camoufox upgrade automatically bumps the UA version.
-    # Verified empirically against stock Firefox 146 on macOS:
-    #   navigator.userAgent  → "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:146.0) Gecko/20100101 Firefox/146.0"
-    #   navigator.appVersion → "5.0 (Macintosh)"
-    #   navigator.oscpu      → "Intel Mac OS X 10.15"   (frozen by Firefox UA reduction; same on Apple Silicon)
-    #   navigator.platform   → "MacIntel"               (frozen; same on Apple Silicon)
-    _CLEAN_UA = (
-        f"Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:{ff_version}.0) "
-        f"Gecko/20100101 Firefox/{ff_version}.0"
-    )
-    _CLEAN_APP_VERSION = "5.0 (Macintosh)"
+    # FIX: Camoufox leaks its identity in the User-Agent string (e.g.
+    # "... Gecko/20100101 Camoufox/<version>").  Override with a clean stock
+    # Firefox macOS UA derived from ff_version (see mcp_launcher/user_agent.py).
+    _CLEAN_UA = clean_user_agent(ff_version)
 
     # Refresh the saved UA if it (a) leaks "Camoufox", or (b) pins a stale
     # Firefox major version that no longer matches the current binary.
-    # Without (b), saved_config would freeze rv:146.0 even after upgrading
-    # to camoufox-147+, producing a UA-vs-engine mismatch.
-    _saved_ua = user_config.get("navigator.userAgent", "")
-    _ua_version_match = re.search(r'rv:(\d+)\.', _saved_ua)
-    _saved_ua_version = int(_ua_version_match.group(1)) if _ua_version_match else None
-    if (
-        "Camoufox" in _saved_ua
-        or _saved_ua_version is None
-        or _saved_ua_version != ff_version
-    ):
+    if needs_ua_refresh(user_config.get("navigator.userAgent", ""), ff_version):
         user_config.pop("navigator.userAgent", None)
         user_config.pop("navigator.appVersion", None)
         user_config.pop("headers.User-Agent", None)
     user_config.setdefault("navigator.userAgent", _CLEAN_UA)
-    user_config.setdefault("navigator.appVersion", _CLEAN_APP_VERSION)
+    user_config.setdefault("navigator.appVersion", CLEAN_APP_VERSION)
     user_config.setdefault("headers.User-Agent", _CLEAN_UA)
 
     # Cursor movement & highlighter (optional, config dict properties).
@@ -314,7 +265,7 @@ def main():
     if args.showcursor:
         user_config["showcursor"] = True
 
-    # Pin HTTPS Accept-Encoding to real Firefox 146 default so it cannot drift
+    # Pin HTTPS Accept-Encoding to the stock Firefox default so it cannot drift
     # via a stale BrowserForge fingerprint (Bug 2 of camoufox#473).  This value
     # flows into nsHttpHandler::SetAcceptEncodings via MaskConfig and — with
     # the C++ patch from PR #474 — applies only to HTTPS, leaving HTTP and
@@ -429,14 +380,15 @@ def main():
     try:
         config = launch_options(**launch_kwargs)
     except Exception as e:
-        if args.executable_path:
-            # launch_options() failed (e.g. CamoufoxNotInstalled) but we have
-            # a custom binary — generate a minimal config and continue.
-            import sys
-            print(f"Warning: launch_options() failed ({e}), using minimal config with custom executable.", file=sys.stderr)
-            config = {}
-        else:
+        if not args.executable_path:
             raise
+        # Launching without a fingerprint (no CAMOU_CONFIG_*, no humanize,
+        # no UA/AE pins) is worse than not launching: fail loudly.
+        print(f"ERROR: launch_options() failed: {e!r}. Refusing to start without a fingerprint; "
+              f"re-run with CAMOUFOX_MCP_ALLOW_EMPTY_CONFIG=1 to override.", file=sys.stderr)
+        if os.environ.get("CAMOUFOX_MCP_ALLOW_EMPTY_CONFIG") != "1":
+            sys.exit(2)
+        config = {}
     config = {k: v for k, v in config.items() if v is not None}
 
     executable_path = args.executable_path or config.get("executable_path", "")
@@ -518,108 +470,28 @@ def main():
     # navigator.userAgent before any JS runs.
     firefox_user_prefs["general.useragent.override"] = _CLEAN_UA
 
-    # Build MCP config JSON.
-    browser_config = {
-        "browserName": "firefox",
-        "launchOptions": {
-            "executablePath": executable_path,
-            "headless": bool(headless_mode),
-            "firefoxUserPrefs": firefox_user_prefs,
-            "env": {
-                # Pass all Camoufox env vars (fingerprint config, display, etc.)
-                k: v
-                for k, v in camoufox_env.items()
-            },
-        },
-    }
-    if persistent:
-        browser_config["userDataDir"] = user_data_dir
+    mcp_config = build_mcp_config(
+        executable_path=executable_path,
+        headless=bool(headless_mode),
+        firefox_user_prefs=firefox_user_prefs,
+        env=camoufox_env,
+        user_agent=_CLEAN_UA,
+        user_data_dir=user_data_dir if persistent else None,
+        window_size=window_size,
+    )
 
-    # Accept-Encoding is now handled at the C++ level by the patched
-    # nsHttpHandler::SetAcceptEncodings (camoufox#473 fix from PR #474, applied
-    # locally in patches/network-patches.patch).  The override is honoured
-    # only on the HTTPS branch and the HTTP/dictionary paths use real Firefox
-    # values.  No Playwright-layer override needed — pages now decode br/zstd
-    # correctly AND outbound Accept-Encoding matches real Firefox 146.
-    context_options = {
-        "colorScheme": "dark",
-        "userAgent": _CLEAN_UA,
-        "extraHTTPHeaders": {
-            "user-agent": _CLEAN_UA,
-        },
-    }
-
-    # WORKAROUND: Headed-mode viewport/window rendering bugs.
-    #
-    # Camoufox has known issues in headed (non-headless) mode where the
-    # browser window renders incorrectly — flickering margins, oversized
-    # windows, cut-off content, and constant size changes:
-    #   - https://github.com/daijro/camoufox/issues/499  (flickering margins)
-    #   - https://github.com/daijro/camoufox/issues/425  (oversized window)
-    #   - https://github.com/daijro/camoufox/issues/532  (constant size change)
-    #   - https://github.com/daijro/camoufox/issues/118  (wrong screen/window)
-    #
-    # Root cause: Playwright MCP applies a default viewport of 1280x720 when
-    # no viewport is specified.  This conflicts with Camoufox's window
-    # dimensions, causing content to render at 1280x720 inside a larger
-    # window — producing "half page" rendering with blank/cut-off areas.
-    #
-    # Additional complications:
-    #   - contextOptions.viewport = null does NOT reliably work:
-    #     * Firefox ignores contextOptions.screen entirely (microsoft/
-    #       playwright#39841, opened 2026-03-25, fix PR not merged)
-    #     * contextOptions in config JSON sometimes ignored by MCP server
-    #       (microsoft/playwright-mcp#1092)
-    #     * Persistent profiles cache old viewport sizes across sessions
-    #       (Playwright MCP docs: viewport "saved and reused")
-    #
-    # Fix: Explicitly set viewport to match Camoufox's window dimensions.
-    # We set it in BOTH contextOptions (for newContext) AND as the
-    # --viewport-size CLI flag (the most reliable path in Playwright MCP).
-    # This ensures Playwright and Camoufox agree on the content area size.
-    if window_size is not None:
-        context_options["viewport"] = {
-            "width": window_size[0],
-            "height": window_size[1],
-        }
-
-    browser_config["contextOptions"] = context_options
-
-    mcp_config = {
-        "browser": browser_config,
-        "capabilities": ["core", "pdf", "vision"],
-    }
-
-    # Write config to a temp file
+    # Write config to a temp file (0600: launchOptions.env holds the host env)
     config_file = os.path.join(
         tempfile.gettempdir(), "camoufox-mcp-config.json"
     )
-    with open(config_file, "w") as f:
-        json.dump(mcp_config, f)
+    write_mcp_config(config_file, mcp_config)
 
     # Merge current env with all camoufox env vars
     env = os.environ.copy()
     for k, v in camoufox_env.items():
         env[k] = v
 
-    # Build MCP server args
-    mcp_args = [
-        "npx",
-        "@playwright/mcp@0.0.68",
-        "--config",
-        config_file,
-    ]
-
-    # In headed mode, also pass --viewport-size as CLI flag.
-    # This is the most reliable way to set viewport in Playwright MCP —
-    # it's processed at the server level and overrides any cached viewport
-    # from persistent profiles.  contextOptions.viewport alone is unreliable
-    # on Firefox (see comments above).
-    if window_size is not None:
-        mcp_args.extend([
-            "--viewport-size",
-            f"{window_size[0]}x{window_size[1]}",
-        ])
+    mcp_args = build_mcp_args(config_file, window_size, args.mcp_package)
 
     # Launch MCP server - exec replaces this process so stdio is passed through
     os.execvpe("npx", mcp_args, env)
