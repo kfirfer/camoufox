@@ -7,7 +7,7 @@ import orjson
 from playwright._impl._driver import compute_driver_executable
 
 from camoufox.pkgman import LOCAL_DATA
-from camoufox.utils import launch_options
+from camoufox.utils import launch_options, spoofs_window_dimensions
 
 LAUNCH_SCRIPT: Path = LOCAL_DATA / "launchServer.js"
 
@@ -50,6 +50,11 @@ def launch_server(**kwargs) -> NoReturn:
     mode, and clients reach the persistent profile through
     `browser.contexts[0]` after `firefox.connect()`. Contexts created with
     `browser.new_context()` are ephemeral and are NOT saved to the profile.
+
+    Shared mode has two consequences for clients: contexts created with
+    `new_context()` are visible to every client and are not closed when the
+    creating client disconnects, and closing `browser.contexts[0]` shuts the
+    persistent browser down for everyone.
     """
     # fix-user-data: a persistent profile IS servable. Playwright's
     # BrowserServerLauncherImpl.launchServer() honours the private
@@ -62,11 +67,21 @@ def launch_server(**kwargs) -> NoReturn:
     # playwright<1.63). launch_options() emits `_user_data_dir`, and
     # camel_case() keeps the leading underscore (-> `_userDataDir`,
     # `_sharedBrowser`).
-    kwargs.pop('persistent_context', None)
+    if kwargs.pop('persistent_context', None) and not kwargs.get('user_data_dir'):
+        # Don't accept the option and silently serve a throwaway profile.
+        raise ValueError("launch_server(persistent_context=True) requires user_data_dir")
 
     config = launch_options(**kwargs)
     if config.get('_user_data_dir'):
         config['_shared_browser'] = True
+        # Server-side counterpart of NewBrowser's #666 default: the persistent
+        # context is created here, so Playwright would give it its 1280x720
+        # default viewport, contradicting the spoofed window dimensions (and
+        # clients cannot change it on contexts[0] afterwards).
+        if spoofs_window_dimensions(config) and not any(
+            key in config for key in ('viewport', 'no_viewport', 'no_default_viewport')
+        ):
+            config['no_default_viewport'] = True
     nodejs = get_nodejs()
 
     data = orjson.dumps(to_camel_case_dict(config))

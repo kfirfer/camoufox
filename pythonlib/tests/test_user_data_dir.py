@@ -66,11 +66,12 @@ class _FakePlaywright:
 
 
 def test_new_browser_never_passes_private_key_to_launch(monkeypatch):
-    # The exact TypeError from §1.3-1, without needing a browser.
+    # The exact TypeError from §1.3-1, without needing a browser: the pre-fix
+    # launch_options() always emitted the key, as None when no dir was set.
     from camoufox import sync_api
     monkeypatch.setattr(sync_api, "attach_no_viewport_default", lambda b: None)
     pw = _FakePlaywright()
-    sync_api.NewBrowser(pw, from_options={"headless": True, "_user_data_dir": "/p"})
+    sync_api.NewBrowser(pw, from_options={"headless": True, "_user_data_dir": None})
     kind, _, kw = pw.firefox.calls[0]
     assert kind == "launch" and "_user_data_dir" not in kw and "user_data_dir" not in kw
 
@@ -116,3 +117,78 @@ def test_launch_server_forwards_user_data_dir(monkeypatch, tmp_path):
     # launchServerShared mode: without it Playwright isolates contexts per
     # connection and clients never see the persistent default context.
     assert sent["_sharedBrowser"] is True
+
+
+def _capture_launch_server(monkeypatch, tmp_path, options, **kwargs):
+    """Run launch_server() with launch_options() stubbed; return the Node payload."""
+    import base64, io, json, subprocess
+    from camoufox import server
+    captured = {}
+    monkeypatch.setattr(server, "launch_options", lambda **kw: dict(options))
+    monkeypatch.setattr(server, "get_nodejs", lambda: str(tmp_path / "node"))
+    class P:
+        returncode = 0
+        def __init__(self, *a, **k): self.stdin = io.StringIO()
+        def wait(self, timeout=None): captured.setdefault("payload", self.stdin.getvalue()); return 0
+        def poll(self): return 0
+    monkeypatch.setattr(subprocess, "Popen", P)
+    try:
+        server.launch_server(**kwargs)
+    except RuntimeError:
+        pass  # NoReturn contract: raises once the child exits
+    return json.loads(base64.b64decode(captured["payload"].strip()))
+
+
+_SPOOFED_WINDOW_ENV = {"CAMOU_CONFIG_1": '{"window.outerWidth": 1366, "window.outerHeight": 753}'}
+
+
+def test_launch_server_persistent_spoofed_window_disables_default_viewport(monkeypatch, tmp_path):
+    # Server-side counterpart of upstream #666: without it the persistent context
+    # gets Playwright's 1280x720 viewport, contradicting the spoofed window size.
+    sent = _capture_launch_server(
+        monkeypatch, tmp_path,
+        {"headless": True, "env": _SPOOFED_WINDOW_ENV, "_user_data_dir": "/p"},
+        user_data_dir="/p",
+    )
+    assert sent["noDefaultViewport"] is True
+
+
+def test_launch_server_persistent_keeps_explicit_viewport(monkeypatch, tmp_path):
+    sent = _capture_launch_server(
+        monkeypatch, tmp_path,
+        {"headless": True, "env": _SPOOFED_WINDOW_ENV, "_user_data_dir": "/p",
+         "viewport": {"width": 800, "height": 600}},
+        user_data_dir="/p",
+    )
+    assert "noDefaultViewport" not in sent and sent["viewport"] == {"width": 800, "height": 600}
+
+
+def test_launch_server_without_profile_leaves_viewport_alone(monkeypatch, tmp_path):
+    sent = _capture_launch_server(monkeypatch, tmp_path, {"headless": True, "env": _SPOOFED_WINDOW_ENV})
+    assert "noDefaultViewport" not in sent and "_sharedBrowser" not in sent
+
+
+def test_launch_server_persistent_without_dir_raises(monkeypatch, tmp_path):
+    import pytest
+    with pytest.raises(ValueError, match="user_data_dir"):
+        _capture_launch_server(monkeypatch, tmp_path, {"headless": True}, persistent_context=True)
+
+
+def test_new_browser_dir_without_persistent_context_raises():
+    # A profile dir without persistent_context=True would otherwise be dropped
+    # silently and the session would run on a throwaway profile.
+    import pytest
+    from camoufox import sync_api
+    with pytest.raises(ValueError, match="persistent_context"):
+        sync_api.NewBrowser(_FakePlaywright(), from_options={"headless": True, "_user_data_dir": "/p"})
+
+
+def test_async_new_browser_dir_without_persistent_context_raises():
+    import asyncio, pytest
+    from camoufox import async_api
+    class _AsyncFirefox:
+        async def launch(self, **kw): return object()
+    class _AsyncPlaywright:
+        firefox = _AsyncFirefox()
+    with pytest.raises(ValueError, match="persistent_context"):
+        asyncio.run(async_api.AsyncNewBrowser(_AsyncPlaywright(), from_options={"headless": True, "_user_data_dir": "/p"}))

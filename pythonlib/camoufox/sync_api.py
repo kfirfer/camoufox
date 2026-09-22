@@ -125,7 +125,11 @@ def NewBrowser(
         return sync_attach_vd(context, virtual_display)
 
     # Browser
-    browser = playwright.firefox.launch(**split_user_data_dir(from_options)[0])
+    opts, user_data_dir = split_user_data_dir(from_options)
+    if user_data_dir:
+        # Don't drop the profile silently and run on a throwaway one.
+        raise ValueError("user_data_dir requires persistent_context=True")
+    browser = playwright.firefox.launch(**opts)
     if no_viewport_default:
         attach_no_viewport_default(browser)
     return sync_attach_vd(browser, virtual_display)
