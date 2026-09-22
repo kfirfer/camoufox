@@ -905,7 +905,7 @@ Table re-verified with `npm view` on 2026-09-21. The latest release is `0.0.82`,
 
 **Deliverable:** evidence (command output) that every item in §1.2 works on the 152 build, plus green upstream test suites.
 
-### [/] Task 5.1: Upstream automated suites
+### [X] Task 5.1: Upstream automated suites
 
 - [X] **Step 1: pythonlib unit tests**: `cd pythonlib && ../.venv/bin/python -m pytest tests -q`. Expected: `178 passed, 4 skipped` (Playwright 1.58). **Result:** `178 passed, 4 skipped` ✔
 - [X] **Step 2: Install pythonlib into the MCP runtime venv.** **Done** (camoufox 0.4.11 → 0.5.6 editable, playwright stays 1.58.0; matrix section 0 with this interpreter: `OK — 51 config keys` vs `FAIL: no CAMOU_CONFIG env` at baseline). The repo `.venv` was done in Task 0.3. `claude-1/.venv` currently has **camoufox 0.4.11** and ships only `pip3`, so use `uv` or `-m pip`:
@@ -919,7 +919,8 @@ Table re-verified with `npm view` on 2026-09-21. The latest release is `0.0.82`,
   bash build-tester/run_tests.sh "$APP" --no-cert
   ```
   **Result (2026-09-22):** branch 152 build → `OVERALL [A] 1040/1048` (run 1) and `1042/1048` (run 2); exit 1 because not every check passed. The one consistent failure, on all 6 per-context profiles, is `selfDestruct.setTimezone` ("setTimezone still present on window — self-destruct failed"). **Pristine upstream beta.30** (`~/Library/Caches/camoufox/browsers/official/152.0.4-beta.30-3b43e766`) fails the **same** check on the same 6 profiles (`[A] 1040/1048`), so it is pre-existing upstream behaviour, not a branch regression. The remaining 0–2 Linux misses vary run to run on both builds (flaky). Failures were listed with a scratch wrapper around `runner.print_profile_result`, because the runner prints totals only.
-- [ ] **Step 4: Playwright tests**: run `(cd tests && bash run-tests.sh --executable-path "$B152")`. Do not use `make tests`: its path is hard-coded to `obj-x86_64-pc-linux-gnu/dist/bin/camoufox-bin`, and the Makefile must stay clean. Record pass/fail counts, and compare failures with a run of the pristine upstream beta.30 binary before attributing them to the branch.
+- [X] **Step 4: Playwright tests**: run `(cd tests && bash run-tests.sh --executable-path "$B152")`. Do not use `make tests`: its path is hard-coded to `obj-x86_64-pc-linux-gnu/dist/bin/camoufox-bin`, and the Makefile must stay clean. Record pass/fail counts, and compare failures with a run of the pristine upstream beta.30 binary before attributing them to the branch.
+  **Result (2026-09-22):** `run-tests.sh` has no per-test timeout and hung indefinitely on `test_defaultbrowsercontext.py::test_should_support_geolocation_and_permission_option` (its `getCurrentPosition` promise has no error callback), so the suite was re-run directly: `CAMOUFOX_EXECUTABLE_PATH=$B152 venv/bin/pytest --headless --timeout 120 async/` → **1071 passed, 25 failed, 107 skipped, 2 errors** (3h22m). The exact 25 failures + 2 errors (HTTP auth/credentials ×12, geolocation ×5, tracing ×3, custom-timeout assertions ×2, clock pause, locator-handler, empty-url popup, websocket error event) were re-run on **pristine upstream beta.30** → **identical `25 failed, 2 errors`**. None are branch regressions.
 - [X] **Step 5 (optional; needs `service-tester/proxies.txt`): service-tester**, the second suite upstream's `CLAUDE.md` marks as required for PRs. It builds a wheel from `pythonlib/`, auto-detects the local macOS build, and copies `properties.json` itself: `(cd service-tester && ./run_tests.sh --binary local)`. Skip it and say so if no proxies are available. **Skipped:** `service-tester/proxies.txt` does not exist.
 
 ### [/] Task 5.2: MCP end-to-end (F7, F8)
@@ -1014,21 +1015,21 @@ This procedure was validated end to end against the 146 binary with merged pytho
 
 **Deliverable:** docs match the 152 reality, the branch is pushed, and the rollback path is documented.
 
-### [/] Task 6.1: Update branch docs
+### [X] Task 6.1: Update branch docs
 
-- [ ] `STEALTH_TEST_MATRIX.md`: replace the 33 occurrences of `146` (paths `camoufox-146.0.1-beta.25` → `camoufox-152.0.4-beta.30`, UA `rv:146.0`/`Firefox/146.0` → `152`). Update the TLS/JA4 "Known caveat" (around line 195) and its repeat (around line 893). **152 is still long-tail**, not current: mainline Firefox is 156.0 as of 2026-09-21, four majors ahead. Say so instead of claiming parity. Replace **both** F4 greps (around lines 136 and 842). They look for `MaskConfig::GetString("timezone")` in `WorkerPrivate.cpp`, which is **absent after the merge** because that fallback now lives in `dom/base/TimezoneManager.cpp`. Use `grep -q "ucid != 0" …/dom/workers/WorkerPrivate.cpp && grep -q 'MaskConfig::GetString("timezone")' …/dom/base/TimezoneManager.cpp`.
-- [ ] `STEALTH_TEST_MATRIX.md` persistence check: in F1 checks that go through `launch_server`, clients must use `browser.contexts[0]`, not `new_context()` (§1.3-2).
-- [ ] `MISC.md`: new binary path and the `claude mcp add` lines, keeping `--no-headless --humanize --showcursor` (3 occurrences of `146` today).
-- [ ] `CAMOUFOX_FEEDBACK.md`: the 4 occurrences of `146`, plus the Task 5.6 status column.
-- [ ] `test_humanize.py`: `CAMOUFOX_BINARY` env var (Task 5.4).
-- [ ] Mark each task in this plan `[X]` and fill in the §4.4 table.
-- [ ] Commit: `git commit -am "docs: update stealth matrix, MISC and helpers for Firefox 152.0.4 / Camoufox beta.30"`
+- [X] `STEALTH_TEST_MATRIX.md`: replace the 33 occurrences of `146` (paths `camoufox-146.0.1-beta.25` → `camoufox-152.0.4-beta.30`, UA `rv:146.0`/`Firefox/146.0` → `152`). Update the TLS/JA4 "Known caveat" (around line 195) and its repeat (around line 893). **152 is still long-tail**, not current: mainline Firefox is 156.0 as of 2026-09-21, four majors ahead. Say so instead of claiming parity. Replace **both** F4 greps (around lines 136 and 842). They look for `MaskConfig::GetString("timezone")` in `WorkerPrivate.cpp`, which is **absent after the merge** because that fallback now lives in `dom/base/TimezoneManager.cpp`. Use `grep -q "ucid != 0" …/dom/workers/WorkerPrivate.cpp && grep -q 'MaskConfig::GetString("timezone")' …/dom/base/TimezoneManager.cpp`.
+- [X] `STEALTH_TEST_MATRIX.md` persistence check: in F1 checks that go through `launch_server`, clients must use `browser.contexts[0]`, not `new_context()` (§1.3-2).
+- [X] `MISC.md`: new binary path and the `claude mcp add` lines, keeping `--no-headless --humanize --showcursor` (3 occurrences of `146` today).
+- [X] `CAMOUFOX_FEEDBACK.md`: the 4 occurrences of `146`, plus the Task 5.6 status column. (The 4 `146` mentions describe the original stock-Firefox-146 test run and were kept as historical fact; a 152 status section was added.)
+- [X] `test_humanize.py`: `CAMOUFOX_BINARY` env var (Task 5.4).
+- [X] Mark each task in this plan `[X]` and fill in the §4.4 table.
+- [X] Commit: `git commit -am "docs: update stealth matrix, MISC and helpers for Firefox 152.0.4 / Camoufox beta.30"`
 
-### [ ] Task 6.2: Final review & push
+### [/] Task 6.2: Final review & push
 
-- [ ] **Step 1:** `git log --oneline pre-ff152-upgrade..HEAD` shows one merge commit plus focused follow-up commits.
-- [ ] **Step 2:** `git diff v152.0.4-beta.30 -- patches additions pythonlib` shows **only** the intended branch deltas: branding (5 files under `additions/browser/`), `PageHandler.js` **identical to upstream** (no diff), the HTTPS-only encoding override, the ucid→0 fallback, `server.py` (rejection removed + `_shared_browser`), `utils.py`/`sync_api.py`/`async_api.py` user-data-dir handling, and `test_user_data_dir.py`. Anything else is an accidental regression of upstream and must be reverted.
-- [ ] **Step 3:** Request a code review (superpowers:requesting-code-review), then `git push -u origin fix-user-data-ff-152`. Do **not** merge into `fix-user-data`; the user does that after sign-off.
+- [X] **Step 1:** `git log --oneline pre-ff152-upgrade..HEAD` shows one merge commit plus focused follow-up commits.
+- [X] **Step 2:** `git diff v152.0.4-beta.30 -- patches additions pythonlib` shows **only** the intended branch deltas: branding (5 files under `additions/browser/`), `PageHandler.js` **identical to upstream** (no diff), the HTTPS-only encoding override, the ucid→0 fallback, `server.py` (rejection removed + `_shared_browser`), `utils.py`/`sync_api.py`/`async_api.py` user-data-dir handling, and `test_user_data_dir.py`. Anything else is an accidental regression of upstream and must be reverted. **Result:** exactly those 12 files; `PageHandler.js` identical to upstream ✔.
+- [X] **Step 3:** Request a code review (superpowers:requesting-code-review). **Result:** "ready with fixes", no Critical. Fixed: (Important) persistent `launch_server` now sets `noDefaultViewport` when the fingerprint spoofs window size — verified live, inner/outer went from 1280×720/1366×753 to 1366×700/1366×753; (Important) profile dir no longer silently dropped (`launch_server(persistent_context=True)` without dir and `NewBrowser(user_data_dir)` without `persistent_context` raise); (Minor) fingerprint save reassembles all `CAMOU_CONFIG_<n>` chunks (live config is 32061 chars, 706 short of the split), `O_NOFOLLOW` on the config file, distinct override warning, path regex, CLI tests, build-script robustness, shared-mode docstring. Not changed: About-dialog wording (pre-existing branding, `bcbf374`) and the informational dictionary-header note. Then, then `git push -u origin fix-user-data-ff-152`. Do **not** merge into `fix-user-data`; the user does that after sign-off.
 - [ ] **Step 4:** Remove the old tree **only after sign-off**: `rm -rf camoufox-146.0.1-beta.25 firefox-146.0.1.source.tar.xz` (both are gitignored, about 30 GB).
 
 ---
