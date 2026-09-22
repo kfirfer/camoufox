@@ -22,7 +22,7 @@
 - All work lands on branch **`fix-user-data`**. Never on `main`, never force-pushed.
 - **Do not remove or change the behaviour of any branch feature** listed in §1.2. Any change to how one is *implemented* must be justified here and covered by a test.
 - Upstream remote: `https://github.com/daijro/camoufox` (this repo's `origin` is the fork `kfirfer/camoufox`).
-- Build host: macOS arm64 (Darwin 27, SDK 27.0). Firefox 152 needs macOS SDK **≥ 26.4** (`build/moz.configure/toolchain.configure: mac_sdk_min_version() == "26.4"`), so this host qualifies.
+- Build host: macOS arm64 (Darwin 27, SDK 27.0). Firefox 152 needs macOS SDK **≥ 26.4** (`build/moz.configure/toolchain.configure: mac_sdk_min_version() == "26.4"`), so this host qualifies. **Correction (2026-09-22, found in Task 3.3):** the host *default* SDK 27.0 does **not** work: its `.tbd` stubs list `arm64e.x1-macos`, which the bootstrapped clang/lld **20.1.8** rejects (`could not load TAPI file … unknown architecture`), and configure dies with `Couldn't find one that works`. The installed `MacOSX26.5.sdk` (≥ 26.4, no `arm64e.x1`, and the SDK upstream's `macos.mozconfig` uses for cross builds) works. `scripts/build-macos-native.sh` selects it via `SDKROOT` (honoured by `xcrun`), keeping the Makefile clean.
 - Firefox 152 stock header defaults (checked against `FIREFOX_152_0_4_RELEASE:modules/libpref/init/all.js`):
   `network.http.accept-encoding = "gzip, deflate"`, `network.http.accept-encoding.secure = "gzip, deflate, br, zstd"`, `network.http.accept-encoding.dictionary = "dcb, dcz"`.
 - Python constraint from upstream pythonlib 0.5.6: `playwright < 1.63`. From Playwright **1.61** onward the browser build must be **≥ beta.30** (`CONSTRAINTS.PLAYWRIGHT_BROWSER_FLOORS`).
@@ -535,20 +535,20 @@ The repo `.venv` is uv-managed and has **no `pip` and no `pytest`**. `import cam
 
 **Deliverable:** `camoufox-152.0.4-beta.30/obj-aarch64-apple-darwin/dist/Camoufox.app` built from the merged branch, with every patch applying cleanly and F3/F4 present in the compiled sources.
 
-### [/] Task 3.1: Fetch and prepare the Firefox 152.0.4 tree
+### [X] Task 3.1: Fetch and prepare the Firefox 152.0.4 tree
 
-- [ ] **Step 1: Toolchain check**
+- [X] **Step 1: Toolchain check**
   ```bash
   xcrun --show-sdk-version           # must be >= 26.4 (host: 27.0)
   python3 -c 'import tomllib'        # mach needs Python >= 3.11
   ```
-- [ ] **Step 2: Fetch + extract + copy additions**
+- [X] **Step 2: Fetch + extract + copy additions**
   ```bash
   which aria2c                                     # `make fetch` uses aria2c (installed at /opt/homebrew/bin)
   make fetch          # archive.mozilla.org/pub/firefox/releases/152.0.4/source/ (verified HTTP 200)
   make setup          # creates camoufox-152.0.4-beta.30/ as a git repo tagged `unpatched`
   ```
-- [ ] **Step 3: Apply the full patch stack**
+- [X] **Step 3: Apply the full patch stack**
   ```bash
   # patch.py defaults to macos,arm64 when BUILD_TARGET is unset; set it explicitly anyway.
   BUILD_TARGET=macos,arm64 make dir 2>&1 | tee /tmp/ff152-patch.log; echo "make dir exit=${pipestatus[1]:-${PIPESTATUS[0]}}"
@@ -557,22 +557,24 @@ The repo `.venv` is uv-managed and has **no `pip` and no `pytest`**. `import cam
   ```
   `patch.py` prints `ERROR: N patch(es) failed to apply cleanly` and exits 1 on any reject. Note that `make dir` resets the tree (`git reset --hard unpatched && ./mach clobber && git clean -fdx`), which also wipes any `obj-*` dir.
   **Pre-validated:** the merged stack with the §2 resolutions was applied in `patch.py` order (sorted by basename, `roverfox/` last) to the 208 `FIREFOX_152_0_4_RELEASE` files the stack touches. `network-patches.patch` and `timezone-spoofing.patch` applied with no offset or fuzz, and the result set was identical to pristine upstream beta.30. A real failure here therefore points at the tarball or tree state rather than the resolutions.
-- [ ] **Step 4: One-time mach bootstrap** (only if `~/.mozbuild` is stale): `make mozbootstrap`
+- [X] **Step 4: One-time mach bootstrap** (only if `~/.mozbuild` is stale): `make mozbootstrap` — not run: `--enable-bootstrap` fetches toolchains on demand during `make build`.
 
-### [ ] Task 3.2: Confirm (and only if needed, regenerate) the two hand-merged patches
+### [X] Task 3.2: Confirm (and only if needed, regenerate) the two hand-merged patches
+
+> **Result (2026-09-22):** `make dir` exit 0, zero `offset`/`fuzz`/reject lines in `/tmp/ff152-patch.log`; both hunks present in the tree. Steps 2–4 were **not needed** (not run).
 
 With the Task 1.1 headers, both patches were validated to apply with no offset or fuzz, so **regeneration is expected to be unnecessary**. This task is a verification gate. Regenerate only if Task 3.1's log shows `offset`/`fuzz`/rejects for either file.
 
 **Files:** (only if regenerating) `patches/network-patches.patch`, `patches/timezone-spoofing.patch`
 
-- [ ] **Step 1: Check the apply log for either patch**
+- [X] **Step 1: Check the apply log for either patch**
   ```bash
   grep -A8 -E "network-patches.patch|timezone-spoofing.patch" /tmp/ff152-patch.log | grep -E "offset|fuzz|FAILED" ; echo "(empty = nothing to regenerate)"
   grep -n -A6 "else if (isSecure)" camoufox-152.0.4-beta.30/netwerk/protocol/http/nsHttpHandler.cpp
   grep -n -B2 -A18 "Apply per-context timezone override" camoufox-152.0.4-beta.30/dom/workers/WorkerPrivate.cpp
   ```
   Expected: the HTTPS-only override (Task 1.1 Step 3) and the `ucid != 0` fallback block (Task 1.1 Step 4).
-- [ ] **Step 2 (only if Step 1 showed offset/fuzz/reject): regenerate non-interactively.** `make edits` is an `easygui` GUI, so an agent should not use it. Its "Write workspace to patch" is just `git diff first-checkpoint > file`. That form **omits untracked files**, and `timezone-spoofing.patch` *creates* `dom/base/TimezoneManager.{cpp,h}`, so stage everything first:
+- [X] **Step 2 (only if Step 1 showed offset/fuzz/reject): regenerate non-interactively.** `make edits` is an `easygui` GUI, so an agent should not use it. Its "Write workspace to patch" is just `git diff first-checkpoint > file`. That form **omits untracked files**, and `timezone-spoofing.patch` *creates* `dom/base/TimezoneManager.{cpp,h}`, so stage everything first:
   ```bash
   P=patches/timezone-spoofing.patch          # or patches/network-patches.patch
   make workspace ./$P                        # unapply → first-checkpoint → re-apply this patch
@@ -581,16 +583,16 @@ With the Task 1.1 headers, both patches were validated to apply with no offset o
   (cd camoufox-152.0.4-beta.30 && git reset -q)
   diff <(grep '^diff --git' $P | sort -u) <(grep '^diff --git' $P.new | sort -u) && mv $P.new $P   # same file set, or stop
   ```
-- [ ] **Step 3: Round-trip check** (only if Step 2 ran). Every patch applies to a pristine tree:
+- [X] **Step 3: Round-trip check** (only if Step 2 ran). Every patch applies to a pristine tree:
   ```bash
   BUILD_TARGET=macos,arm64 make dir 2>&1 | grep -E "patch\(es\) failed|\.rej|malformed"; echo "(empty = OK)"
   ```
   `make dir` resets to `unpatched` by itself, so no separate `make revert` is needed.
-- [ ] **Step 4: Commit** (only if Step 2 ran) `git commit -am "patches: regenerate network/timezone patches against Firefox 152.0.4"`
+- [X] **Step 4: Commit** (only if Step 2 ran) `git commit -am "patches: regenerate network/timezone patches against Firefox 152.0.4"`
 
-### [ ] Task 3.3: Build and package
+### [/] Task 3.3: Build and package
 
-- [ ] **Step 1: Build**: `make build 2>&1 | tee /tmp/ff152-build.log`. That takes about 40 min cold and about 5 min incremental with ccache. Expected tail: `Your build was successful!`
+- [ ] **Step 1: Build**: `scripts/build-macos-native.sh build 2>&1 | tee /tmp/ff152-build.log` (plain `make build` fails on this host's SDK 27, see Global Constraints). That takes about 40 min cold and about 5 min incremental with ccache. Expected tail: `Your build was successful!`
 - [ ] **Step 2: Smoke-run the binary**
   ```bash
   APP=$PWD/camoufox-152.0.4-beta.30/obj-aarch64-apple-darwin/dist/Camoufox.app
@@ -606,9 +608,9 @@ With the Task 1.1 headers, both patches were validated to apply with no offset o
   This is needed by Task 5.3 and by any in-process `Camoufox(executable_path="$B152")`. The obj dir is regenerated by `make build`, so repeat this after every rebuild. The MCP launcher does not depend on it, because it keeps the F8 shim.
 - [ ] **Step 4 (optional, for distribution): package**: `make package-macos arch=arm64`.
 
-### [ ] Task 3.4: Static verification that the branch C++ fixes are compiled in
+### [X] Task 3.4: Static verification that the branch C++ fixes are compiled in
 
-- [ ] **Step 1**
+- [X] **Step 1**
   ```bash
   SRC=camoufox-152.0.4-beta.30
   grep -A4 "else if (isSecure)" $SRC/netwerk/protocol/http/nsHttpHandler.cpp | grep -q MaskConfig && echo F3-OK
