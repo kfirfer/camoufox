@@ -11,6 +11,7 @@ launch.exe
 # Internal testing
 /extra-docs
 pythonlib/test*
+!pythonlib/tests/
 jsonvv/test*
 /.vscode
 /bundle/fonts/extra
@@ -21,6 +22,7 @@ scripts/test*
 .idea
 /tests/*.disabled
 k8s/
+camoufox-*.*.*/
 
 # Old data
 _old/
@@ -34,6 +36,7 @@ wget-log
 
 # Python interface
 venv/
+venv[0-9]*/
 __pycache__/
 *.pyc
 *.mmdb
@@ -47,7 +50,7 @@ closedsrc
 
 .venv
 *.pem
-.DS_store
+.DS_Store
 
 # Build outputs
 *.so
@@ -70,7 +73,10 @@ closedsrc
 /fonts/
 /gmp-clearkey/
 /windows-build/
+_bisect_extract/
+node_modules/
 
 node_modules/
 proxies.txt
 checks-bundle.js
+.env

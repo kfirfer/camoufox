@@ -16,7 +16,12 @@ from typing_extensions import Literal
 from camoufox.virtdisplay import VirtualDisplay
 
 from .fingerprints import generate_context_fingerprint
-from .utils import async_attach_vd, launch_options
+from .utils import (
+    async_attach_vd,
+    attach_no_viewport_default,
+    launch_options,
+    spoofs_window_dimensions,
+)
 
 
 class AsyncCamoufox(PlaywrightContextManager):
@@ -32,13 +37,24 @@ class AsyncCamoufox(PlaywrightContextManager):
 
     async def __aenter__(self) -> Union[Browser, BrowserContext]:
         _playwright = await super().__aenter__()
-        self.browser = await AsyncNewBrowser(_playwright, **self.launch_options)
+        try:
+            self.browser = await AsyncNewBrowser(_playwright, **self.launch_options)
+        except BaseException as e:
+            # Any launch failure (InvalidProxy, missing browser, bad options, ...)
+            # must tear down the playwright session started above so the driver
+            # process/connection is not leaked.
+            await super().__aexit__(type(e), e, e.__traceback__)
+            raise
         return self.browser
 
     async def __aexit__(self, *args: Any):
-        if self.browser:
-            await self.browser.close()
-        await super().__aexit__(*args)
+        # Run the base teardown even if browser.close() raises (e.g. the browser
+        # process already crashed), so the playwright driver/connection is not leaked.
+        try:
+            if self.browser:
+                await self.browser.close()
+        finally:
+            await super().__aexit__(*args)
 
 
 @overload
@@ -94,13 +110,21 @@ async def AsyncNewBrowser(
             partial(launch_options, headless=headless, debug=debug, **kwargs),
         )
 
+    # Playwright's default viewport deadlocks Juggler when the window is spoofed
+    # to a different size (daijro/camoufox#666), so default to no_viewport.
+    no_viewport_default = spoofs_window_dimensions(from_options)
+
     # Persistent context
     if persistent_context:
+        if no_viewport_default and not ('viewport' in from_options or 'no_viewport' in from_options):
+            from_options = {**from_options, 'no_viewport': True}
         context = await playwright.firefox.launch_persistent_context(**from_options)
         return await async_attach_vd(context, virtual_display)
 
     # Browser
     browser = await playwright.firefox.launch(**from_options)
+    if no_viewport_default:
+        attach_no_viewport_default(browser)
     return await async_attach_vd(browser, virtual_display)
 
 

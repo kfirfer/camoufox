@@ -148,22 +148,22 @@ Phases 2, 3 and 4 are independent after Phase 1. Phase 3 (the build, about 40 mi
 
 **Deliverable:** a recoverable starting point, a recorded baseline, and the upstream tag available locally.
 
-### [ ] Task 0.1: Snapshot and baseline
+### [X] Task 0.1: Snapshot and baseline
 
 **Files:** none modified.
 
-- [ ] **Step 1: Confirm a clean tree on the right branch**
+- [X] **Step 1: Confirm a clean tree on the right branch**
   ```bash
   cd /Users/dev345/code/kfirfer/camoufox
   git switch fix-user-data && git status --short   # expect: empty
   git pull --ff-only origin fix-user-data
   ```
-- [ ] **Step 2: Tag the pre-upgrade state (rollback point)**
+- [X] **Step 2: Tag the pre-upgrade state (rollback point)**
   ```bash
   git tag -a pre-ff152-upgrade -m "fix-user-data before v152.0.4-beta.30 merge"
   git push origin pre-ff152-upgrade
   ```
-- [ ] **Step 3: Record the baseline behaviour of the current 146 build** (used for the before/after comparison in Phase 5)
+- [X] **Step 3: Record the baseline behaviour of the current 146 build** (used for the before/after comparison in Phase 5)
   ```bash
   B146=camoufox-146.0.1-beta.25/obj-aarch64-apple-darwin/dist/Camoufox.app/Contents/MacOS/camoufox
   ls -la "$B146"
@@ -176,18 +176,18 @@ Phases 2, 3 and 4 are independent after Phase 1. Phase 3 (the build, about 40 mi
   claude mcp get playwright > /tmp/mcp-registration-146.txt   # exact current flags, reused in Task 5.2
   ```
   Also run the STEALTH_TEST_MATRIX "Quick smoke" section against 146 and save the results as `docs/upgrade/baseline-146.md` (not committed if it contains personal IP data).
-- [ ] **Step 4: Free disk space.** A Firefox 152 source tree plus an obj dir needs about 40 GB. Keep the 146 tree until Phase 5 passes.
+- [X] **Step 4: Free disk space.** A Firefox 152 source tree plus an obj dir needs about 40 GB. Keep the 146 tree until Phase 5 passes.
 
-### [ ] Task 0.2: Bring in the upstream tag
+### [X] Task 0.2: Bring in the upstream tag
 
-- [ ] **Step 1: Add upstream remote and fetch the exact tag**
+- [X] **Step 1: Add upstream remote and fetch the exact tag**
   ```bash
   git remote add upstream https://github.com/daijro/camoufox.git 2>/dev/null || true
   git fetch upstream tag v152.0.4-beta.30 --no-tags   # tag is already local as of 2026-09-21; this is a no-op then
   git rev-parse v152.0.4-beta.30^{commit}   # expect 5d06ec1629ac7843508f1e683f83e404fde8db76
   git merge-base --is-ancestor main v152.0.4-beta.30 && echo "main is ancestor — merge is safe"
   ```
-- [ ] **Step 2: Dry-run the merge and confirm the conflict set matches §2**
+- [X] **Step 2: Dry-run the merge and confirm the conflict set matches §2**
   ```bash
   git merge-tree --write-tree --name-only fix-user-data v152.0.4-beta.30
   ```
@@ -211,22 +211,22 @@ The repo `.venv` is uv-managed and has **no `pip` and no `pytest`**. `import cam
 
 **Deliverable:** a single merge commit on `fix-user-data` with the conflicts resolved per §2. `upstream.sh` reads `152.0.4` / `beta.30`.
 
-### [ ] Task 1.1: Perform the merge and resolve conflicts
+### [X] Task 1.1: Perform the merge and resolve conflicts
 
 **Files:**
 - Modify: `additions/juggler/protocol/PageHandler.js`, `patches/network-patches.patch`, `patches/timezone-spoofing.patch`, `pythonlib/camoufox/server.py`
 
-- [ ] **Step 1: Start the merge**
+- [X] **Step 1: Start the merge**
   ```bash
   git merge --no-ff --no-commit v152.0.4-beta.30
   ```
-- [ ] **Step 2: PageHandler.js: take upstream**
+- [X] **Step 2: PageHandler.js: take upstream**
   ```bash
   git checkout --theirs additions/juggler/protocol/PageHandler.js
   grep -n "camouGetMouseTrajectory\|_lastTrackedPos\|>= boundingBox.width" additions/juggler/protocol/PageHandler.js
   ```
   Expected: all three patterns are present (trajectory call, tracked position, `>=` guard).
-- [ ] **Step 3: network-patches.patch: keep ours, on upstream's context.** Resolve the conflict so that the `SetAcceptEncodings` hunk reads exactly:
+- [X] **Step 3: network-patches.patch: keep ours, on upstream's context.** Resolve the conflict so that the `SetAcceptEncodings` hunk reads exactly:
   ```diff
   @@ -2101,6 +2115,10 @@ nsresult nsHttpHandler::SetAcceptEncodings(const char* aAcceptEncodings,
      if (isDictionary) {
@@ -240,7 +240,7 @@ The repo `.venv` is uv-managed and has **no `pip` and no `pytest`**. `import cam
      } else {
   ```
   Remove the `nsCString encodingOverride;` / `aAcceptEncodings = encodingOverride.get();` lines from upstream #543. In practice this means keeping the whole `HEAD` side of the conflict block and dropping the `v152.0.4-beta.30` side. The `@@ -2101,6 +2115,10 @@` header is already exact: upstream's own hunk starts at `-2098`/`+2112` with 3 more leading context lines. **Validated:** it applies to `FIREFOX_152_0_4_RELEASE` sources with no offset or fuzz, both alone and inside the full 53-patch stack.
-- [ ] **Step 4: timezone-spoofing.patch: take upstream, re-add the ucid→0 fallback**
+- [X] **Step 4: timezone-spoofing.patch: take upstream, re-add the ucid→0 fallback**
   ```bash
   git checkout --theirs patches/timezone-spoofing.patch
   ```
@@ -275,7 +275,7 @@ The repo `.venv` is uv-managed and has **no `pip` and no `pytest`**. `import cam
   grep -n '^@@ -6429' patches/timezone-spoofing.patch   # expect: @@ -6429,6 +6431,27 @@
   ```
   The block above has 20 lines plus the existing trailing `+` blank line, i.e. 21 added lines versus upstream's 13, so the new-side count is `6 + 21 = 27`. **Validated:** leaving the header at `+6431,19` makes `patch` abort with `malformed patch at line 291`, which fails `make dir` in Task 3.1 *before* Task 3.2 could regenerate anything. With `+6431,27`, the patch applies with no offset or fuzz and yields the same result set as pristine upstream in the full stack.
-- [ ] **Step 5: server.py: drop the persistent rejection** (auto-merged file, semantic fix). Replace upstream's loop:
+- [X] **Step 5: server.py: drop the persistent rejection** (auto-merged file, semantic fix). Replace upstream's loop:
   ```python
       for unsupported in ('persistent_context', 'user_data_dir'):
           if kwargs.get(unsupported):
@@ -303,7 +303,7 @@ The repo `.venv` is uv-managed and has **no `pip` and no `pytest`**. `import cam
           config['_shared_browser'] = True
   ```
   Also rewrite the docstring note: persistent profiles are servable, and clients reach the profile through `browser.contexts[0]`, not `new_context()`.
-- [ ] **Step 6: Check that no conflict markers remain, then commit the merge**
+- [X] **Step 6: Check that no conflict markers remain, then commit the merge**
   ```bash
   git diff --check && ! git grep -n '^<<<<<<<\|^>>>>>>>' -- additions patches pythonlib
   cat upstream.sh    # version=152.0.4 / release=beta.30

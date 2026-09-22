@@ -48,10 +48,12 @@ class Worker(QThread):
 
 
 class DownloadWorker(Worker):
-    def __init__(self, repo_config, version):
+    def __init__(self, repo_config, version, activate_after_install=False):
         super().__init__()
         self.repo_config = repo_config
         self.version = version
+        self.activate_after_install = activate_after_install
+        self.relative_path = None
 
     def run(self):
         try:
@@ -59,9 +61,14 @@ class DownloadWorker(Worker):
 
             import orjson
 
+            from ..multiversion import version_folder_name
+
             self.status.emit("Downloading...")
             repo_name = get_repo_name(self.repo_config.repo)
-            folder = f"{self.version.version.version}-{self.version.version.build}"
+            sha8 = self.version.sha8 if self.version.sha256 else ""
+            folder = version_folder_name(
+                self.version.version.version, self.version.version.build, sha8
+            )
             path = BROWSERS_DIR / repo_name / folder
             path.mkdir(parents=True, exist_ok=True)
 
@@ -76,7 +83,7 @@ class DownloadWorker(Worker):
             if sys.platform != 'win32':
                 os.system(f'chmod -R 755 {shlex.quote(str(path))}')
 
-            set_active(f"browsers/{repo_name}/{folder}")
+            self.relative_path = f"browsers/{repo_name}/{folder}"
             self.done.emit(True, f"Installed v{self.version.version.full_string}")
         except Exception as e:
             msg = str(e)
@@ -123,6 +130,8 @@ class SyncWorker(Worker):
                                 'asset_id': v.asset_id,
                                 'asset_size': v.asset_size,
                                 'asset_updated_at': v.asset_updated_at,
+                                'sha256': v.sha256,
+                                'created_at': v.asset_created_at,
                             }
                             for v in versions
                         ],
@@ -169,6 +178,8 @@ class Roles(IntEnum):
     Section = Qt.ItemDataRole.UserRole + 7
     Expanded = Qt.ItemDataRole.UserRole + 8
     IsPinned = Qt.ItemDataRole.UserRole + 9
+    Date = Qt.ItemDataRole.UserRole + 10
+    Note = Qt.ItemDataRole.UserRole + 11
 
 
 _ROLE_ATTRS = {
@@ -181,6 +192,8 @@ _ROLE_ATTRS = {
     Roles.Section: 'section',
     Roles.Expanded: 'expanded',
     Roles.IsPinned: 'is_pinned',
+    Roles.Date: 'date',
+    Roles.Note: 'note',
 }
 
 _BOOL_ROLES = {
@@ -202,6 +215,8 @@ _ROLE_NAMES = {
     Roles.Section: b"section",
     Roles.Expanded: b"expanded",
     Roles.IsPinned: b"isPinned",
+    Roles.Date: b"date",
+    Roles.Note: b"note",
 }
 
 
@@ -218,6 +233,8 @@ class VersionItem:
         'expanded',
         'version_data',
         'installed_data',
+        'date',
+        'note',
     )
 
     def __init__(
@@ -233,6 +250,8 @@ class VersionItem:
         expanded=True,
         version_data=None,
         installed_data=None,
+        date="",
+        note="",
     ):
         self.display = display
         self.build = build
@@ -245,6 +264,8 @@ class VersionItem:
         self.expanded = expanded
         self.version_data = version_data
         self.installed_data = installed_data
+        self.date = date
+        self.note = note
 
 
 class VersionModel(QAbstractListModel):
@@ -291,6 +312,7 @@ class Backend(QObject):
     debugChanged = Signal()
     currentRepoChanged = Signal()
     channelPrompt = Signal(int, str, str)
+    installedPrompt = Signal(int, str, str, bool, str)
 
     def __init__(self):
         super().__init__()
@@ -608,12 +630,14 @@ class Backend(QObject):
     @Slot(int)
     def setActive(self, index):
         item = self._version_model.get(index)
-        if not item or item.is_header:
+        if not item or item.is_header or item.version_data is None:
             return
 
         cfg = load_config()
-        cfg.pop('channel', None)
+        ctype = "prerelease" if item.is_prerelease else "stable"
+        cfg['channel'] = f"{get_repo_name(self._current_repo.repo)}/{ctype}"
         cfg['pinned'] = f"{item.version_data.version.version}-{item.version_data.version.build}"
+        cfg['pinned_sha'] = item.version_data.sha256
         cfg.update(
             {
                 'active_repo': self._current_repo.name,
@@ -630,6 +654,45 @@ class Backend(QObject):
         self.infoChanged.emit()
 
     @Slot(int)
+    def unpinVersion(self, index):
+        item = self._version_model.get(index)
+        if not item or not item.is_pinned:
+            return
+
+        cfg = load_config()
+        cfg.pop('pinned', None)
+        cfg.pop('pinned_sha', None)
+        save_config(cfg)
+
+        self._refresh()
+        self.infoChanged.emit()
+
+    @Slot(int)
+    def followVersionChannel(self, index):
+        item = self._version_model.get(index)
+        if not item or not item.version_data or not item.installed_data:
+            return
+
+        ctype = "prerelease" if item.is_prerelease else "stable"
+        repo_name = self._current_repo.name
+        cfg = load_config()
+        cfg['channel'] = repo_name if ctype == "stable" else f"{repo_name}/{ctype}"
+        cfg.pop('pinned', None)
+        cfg.pop('pinned_sha', None)
+        cfg.update(
+            {
+                'active_repo': repo_name,
+                'active_build': item.version_data.version.build,
+                'active_version': item.version_data.version.version,
+            }
+        )
+        save_config(cfg)
+        set_active(item.installed_data.relative_path)
+
+        self._refresh()
+        self.infoChanged.emit()
+
+    @Slot(int)
     def setFollowedChannel(self, index):
         _, keys, _ = self._build_channels()
         if not (0 <= index < len(keys)):
@@ -639,6 +702,7 @@ class Backend(QObject):
         cfg = load_config()
         cfg['channel'] = key
         cfg.pop('pinned', None)
+        cfg.pop('pinned_sha', None)
 
         repo_name, ctype = (key.split('/', 1) + ['stable'])[:2]
         is_pre = ctype == 'prerelease'
@@ -680,31 +744,50 @@ class Backend(QObject):
                 break
 
         self._refresh()
-        self.infoChanged.emit()
 
         for idx, item in enumerate(self._version_model._items):
             if item.is_header:
                 continue
             if item.is_prerelease == is_pre:
-                self._selected = idx
-                self.selectionChanged.emit()
                 if item.installed_data:
                     set_active(item.installed_data.relative_path)
+                    self._refresh()
+                self._selected = idx
+                self.selectionChanged.emit()
                 break
+
+        self.infoChanged.emit()
 
     @Slot()
     def installSelected(self):
         item = self._version_model.get(self._selected)
         if item and not item.is_header and not item.is_installed:
-            self._run_worker(DownloadWorker(self._current_repo, item.version_data), self._on_done)
+            worker = DownloadWorker(
+                self._current_repo,
+                item.version_data,
+                activate_after_install=item.is_active,
+            )
+            self._run_worker(worker, self._on_done)
 
     @Slot()
     def uninstallSelected(self):
         item = self._version_model.get(self._selected)
         if not item or not item.is_installed or not item.installed_data:
             return
+        installed = item.installed_data
+        was_active = item.is_active
         try:
-            remove_version(item.installed_data.path)
+            remove_version(installed.path)
+            if was_active:
+                cfg = load_config()
+                cfg.update(
+                    {
+                        'active_repo': self._current_repo.name,
+                        'active_build': installed.version.build,
+                        'active_version': installed.version.version,
+                    }
+                )
+                save_config(cfg)
             self._set_status(f"Uninstalled {item.display}", "#2ecc71")
             self._refresh()
             self.infoChanged.emit()
@@ -918,15 +1001,48 @@ class Backend(QObject):
             self._version_model.set_items(items)
             return
 
-        installed = {v.version.build: v for v in list_installed()}
+        from ..multiversion import classify_installs, get_repo_name
+        from ..pkgman import format_asset_date
+
         cfg = load_config()
-        active = cfg.get('active_build')
         pinned = cfg.get('pinned')
+        pinned_sha = cfg.get('pinned_sha')
         versions = get_cached_versions(self._current_repo.name)
 
         if not versions:
             self._version_model.set_items(items)
             return
+
+        # newest sha per version-build, used when a pin has no specific sha
+        latest_sha = {}
+        for v in versions:
+            latest_sha.setdefault(v.version.full_string, v.sha256)
+
+        def _is_pinned(v):
+            if not pinned or pinned != v.version.full_string:
+                return False
+            if pinned_sha:
+                return v.sha256 == pinned_sha
+            return v.sha256 == latest_sha.get(v.version.full_string)
+
+        repo_key = get_repo_name(self._current_repo.repo)
+        channel = cfg.get('channel') or get_default_channel()
+        _, active_channel = (channel.split('/', 1) + ['stable'])[:2]
+
+        def _is_active(v, inst):
+            if inst and inst.is_active:
+                return True
+            return (
+                str(cfg.get('active_repo') or '').lower() == repo_key
+                and cfg.get('active_build') == v.version.build
+                and cfg.get('active_version') == v.version.version
+                and v.is_prerelease == (active_channel == 'prerelease')
+                and v.sha256 == latest_sha.get(v.version.full_string)
+            )
+
+        installed_list = [iv for iv in list_installed() if iv.repo_name == repo_key]
+        row_inst, extras = classify_installs(versions, installed_list)
+        inst_by_id = {id(v): inst for v, inst in zip(versions, row_inst)}
 
         for section, is_prerelease in [("stable", False), ("prerelease", True)]:
             version_list = [v for v in versions if v.is_prerelease == is_prerelease]
@@ -946,7 +1062,7 @@ class Backend(QObject):
 
             if expanded:
                 for v in version_list:
-                    inst = installed.get(v.version.build)
+                    inst = inst_by_id.get(id(v))
                     if self._installed_only and not inst:
                         continue
                     items.append(
@@ -954,11 +1070,38 @@ class Backend(QObject):
                             f"v{v.version.version}",
                             v.version.build,
                             is_prerelease=is_prerelease,
-                            is_active=(active == v.version.build),
-                            is_pinned=(pinned == v.version.full_string if pinned else False),
+                            is_active=_is_active(v, inst),
+                            is_pinned=_is_pinned(v),
                             is_installed=bool(inst),
                             version_data=v,
                             installed_data=inst,
+                            date=format_asset_date(v.asset_created_at),
+                        )
+                    )
+
+        if extras:
+            expanded = self._sections.get("other", True)
+            items.append(
+                VersionItem(
+                    "Other Installed",
+                    is_header=True,
+                    section="other",
+                    expanded=expanded,
+                )
+            )
+            if expanded:
+                for iv, note in extras:
+                    items.append(
+                        VersionItem(
+                            f"v{iv.version.version}",
+                            iv.version.build,
+                            is_prerelease=iv.is_prerelease,
+                            is_active=iv.is_active,
+                            is_installed=True,
+                            version_data=None,
+                            installed_data=iv,
+                            date=format_asset_date(iv.created_at),
+                            note=note,
                         )
                     )
 
@@ -995,13 +1138,66 @@ class Backend(QObject):
         worker.start()
 
     def _on_done(self, ok, msg):
+        worker = self._worker
         self._busy = False
         self._progress = -1
         self.busyChanged.emit()
         self._set_status(msg if ok else f"Error: {msg}", "#2ecc71" if ok else "#e74c3c")
         if ok:
+            if (
+                isinstance(worker, DownloadWorker)
+                and worker.activate_after_install
+                and worker.relative_path
+            ):
+                set_active(worker.relative_path)
+
             self._channel_data = None
             self._refresh()
+
+            if isinstance(worker, DownloadWorker):
+                target_idx = -1
+                for idx, item in enumerate(self._version_model._items):
+                    version = item.version_data
+                    if not version:
+                        continue
+                    if (
+                        version.version.full_string == worker.version.version.full_string
+                        and version.sha256 == worker.version.sha256
+                    ):
+                        target_idx = idx
+                        break
+
+                if target_idx >= 0:
+                    self._selected = target_idx
+                    self.selectionChanged.emit()
+
+                    if not worker.activate_after_install:
+                        versions = get_cached_versions(worker.repo_config.name)
+                        latest = next(
+                            (
+                                version
+                                for version in versions
+                                if version.is_prerelease == worker.version.is_prerelease
+                            ),
+                            None,
+                        )
+                        is_latest = bool(
+                            latest
+                            and latest.version.full_string == worker.version.version.full_string
+                            and latest.sha256 == worker.version.sha256
+                        )
+                        channel = worker.repo_config.name
+                        if worker.version.is_prerelease:
+                            channel += " (Prerelease)"
+                        item = self._version_model.get(target_idx)
+                        self.installedPrompt.emit(
+                            target_idx,
+                            item.display,
+                            item.build,
+                            is_latest,
+                            channel,
+                        )
+
             self.infoChanged.emit()
             self._load_spoof_from_cache()
             self.debugChanged.emit()

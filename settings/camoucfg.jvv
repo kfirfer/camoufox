@@ -299,8 +299,10 @@
     "showcursor": "bool",
 
     "allowMainWorld": "bool",
+    "disableWorldIsolation": "bool",
+    "allowAddonNewtab": "bool",
     "forceScopeAccess": "bool",
-    "enableRemoteSubframes": "bool",
+
     "disableTheming": "bool",
     "memorysaver": "bool",
     "addons": "array[str]",

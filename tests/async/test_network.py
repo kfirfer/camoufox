@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import asyncio
+import gzip
 import json
 from asyncio import Future
 from pathlib import Path
@@ -181,7 +182,16 @@ async def test_request_headers_should_work(
     if is_chromium:
         assert "Chrome" in response.request.headers["user-agent"]
     elif is_firefox:
-        assert "Firefox" in response.request.headers["user-agent"]
+        # The bare binary advertises its own build token,
+        # "... Gecko/20100101 Camoufox/<version>". The Python package replaces
+        # that with "Firefox/<version>" (verified on the wire and in
+        # navigator.userAgent) as part of injecting a fingerprint, but this
+        # suite drives the bare binary through plain Playwright and so sees the
+        # unspoofed token. Assert what this layer can actually promise: a Gecko
+        # UA carrying one of the two.
+        user_agent = response.request.headers["user-agent"]
+        assert "Gecko/" in user_agent
+        assert "Firefox" in user_agent or "Camoufox" in user_agent
     elif is_webkit:
         assert "WebKit" in response.request.headers["user-agent"]
 
@@ -539,6 +549,43 @@ async def test_response_body_should_work_with_compression(
         "rb",
     ) as fd:
         assert fd.read() == await response.body()
+
+
+async def test_response_text_should_work_with_compressed_cross_origin_jsonp(
+    page: Page, server: Server
+) -> None:
+    # Opaque Response Blocking decompresses a compressed cross-origin no-CORS response
+    # in the parent process in order to sniff it, unless its Content-Type is
+    # opaque-safelisted. Juggler observes the channel in the parent, so for those
+    # responses it already holds plain bytes and must not decompress them again.
+    # The Content-Type has to be a non-safelisted one (as JSONP endpoints typically
+    # serve) to exercise this: application/javascript is safelisted and skips ORB.
+    # See issue #648.
+    body = 'jsonpCallback({"foo": "bar"});\n'
+
+    def handle_jsonp(request: TestServerRequest) -> None:
+        request.setHeader("Content-Type", "application/json")
+        request.setHeader("Content-Encoding", "gzip")
+        request.write(gzip.compress(body.encode()))
+        request.finish()
+
+    server.set_route("/jsonp", handle_jsonp)
+    await page.goto(server.EMPTY_PAGE)
+
+    # EMPTY_PAGE is served from localhost, CROSS_PROCESS_PREFIX from 127.0.0.1, so the
+    # script tag below is a cross-origin no-CORS subresource.
+    url = server.CROSS_PROCESS_PREFIX + "/jsonp"
+    async with page.expect_response(url) as response_info:
+        # Not add_script_tag(): a non-safelisted Content-Type never executes, so its
+        # load event would never fire.
+        await page.evaluate(
+            "u => { const s = document.createElement('script');"
+            "s.src = u; document.head.appendChild(s); }",
+            url,
+        )
+    response = await response_info.value
+    assert response.headers["content-encoding"] == "gzip"
+    assert await response.text() == body
 
 
 async def test_response_status_text_should_work(page: Page, server: Server) -> None:

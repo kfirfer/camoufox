@@ -98,9 +98,12 @@
   { "property": "mediaDevices:speakers", "type": "uint" },
   { "property": "mediaDevices:enabled", "type": "bool" },
   { "property": "allowMainWorld", "type": "bool" },
+  { "property": "disableWorldIsolation", "type": "bool" },
+  { "property": "allowAddonNewtab", "type": "bool" },
   { "property": "forceScopeAccess", "type": "bool" },
-  { "property": "enableRemoteSubframes", "type": "bool" },
+
   { "property": "disableTheming", "type": "bool" },
+  { "property": "disableInstantAnimations", "type": "bool" },
   { "property": "memorysaver", "type": "bool" },
   { "property": "addons", "type": "array" },
   { "property": "certificatePaths", "type": "array" },

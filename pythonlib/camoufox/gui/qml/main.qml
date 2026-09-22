@@ -25,6 +25,8 @@ ApplicationWindow {
     readonly property int textSm: Math.round(12 * scale)
     readonly property int textMd: Math.round(14 * scale)
     readonly property int colW: Math.round(100 * scale)
+    readonly property int verColW: Math.round(70 * scale)
+    readonly property int dateColW: Math.round(90 * scale)
     readonly property string fontMain: segoe.name
     readonly property string fontIcon: mdl2.name
 
@@ -150,24 +152,42 @@ ApplicationWindow {
         }
     }
 
-    component Check: Rectangle {
-        property bool on: false
+    component PinButton: Item {
+        id: pinButton
+        property bool pinned: false
+        property string pinToolTip: "Pin version"
+        property string unpinToolTip: "Unpin version"
+        signal clicked
 
-        width: s3
-        height: s3
-        radius: s1
-        color: on ? c.accent : "transparent"
-        border.color: on ? c.accent : c.muted
-        border.width: 1
+        width: s4
+        height: s4
 
-        Text {
+        Icon {
             anchors.centerIn: parent
-            text: "\uE73E"
-            color: c.bg
-            font.family: fontIcon
-            font.pixelSize: Math.round(8 * scale)
-            visible: parent.on
+            icon: "\uE840"
+            color: pinButton.pinned ? c.accent : c.muted
+            opacity: pinButton.enabled ? 1 : 0.4
         }
+
+        Icon {
+            anchors.centerIn: parent
+            icon: "\uE842"
+            color: c.accent
+            opacity: pinButton.enabled ? 1 : 0.4
+            visible: pinButton.pinned
+        }
+
+        MouseArea {
+            id: pinMa
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: pinButton.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+            onClicked: if (pinButton.enabled) pinButton.clicked()
+        }
+
+        ToolTip.visible: pinMa.containsMouse && pinButton.enabled
+        ToolTip.text: pinButton.pinned ? pinButton.unpinToolTip : pinButton.pinToolTip
+        ToolTip.delay: 500
     }
 
     component Input: Rectangle {
@@ -333,14 +353,16 @@ ApplicationWindow {
     property string dlgAct: ""
     property string dlgVer: ""
     property string dlgBuild: ""
+    property string dlgChannel: ""
     property int dlgIdx: -1
 
-    function showDlg(act, idx, ver, build) {
+    function showDlg(act, idx, ver, build, channel) {
         backend.selectVersion(idx)
         dlgAct = act
         dlgIdx = idx
         dlgVer = ver
         dlgBuild = build
+        dlgChannel = channel || ""
     }
 
     Rectangle {
@@ -375,7 +397,9 @@ ApplicationWindow {
 
             Bold {
                 text: (dlgAct === "install" || dlgAct === "promptInstall") ? "Install"
-                     : dlgAct === "uninstall" ? "Uninstall" : "Set Active"
+                     : dlgAct === "uninstall" ? "Uninstall"
+                     : dlgAct === "promptPin" ? "Pin Version"
+                     : dlgAct === "promptFollow" ? "Follow Channel" : "Set Active"
                 font.pixelSize: textMd
             }
 
@@ -384,6 +408,10 @@ ApplicationWindow {
                 wrapMode: Text.Wrap
                 text: dlgAct === "promptInstall"
                     ? "Camoufox " + dlgVer + "-" + dlgBuild + " is now active but not installed. Install it now?"
+                    : dlgAct === "promptPin"
+                    ? "Camoufox " + dlgVer + "-" + dlgBuild + " is installed but not active. Would you like to pin this version?"
+                    : dlgAct === "promptFollow"
+                    ? "Camoufox " + dlgVer + "-" + dlgBuild + " is installed but not active. Would you like to follow " + dlgChannel + " for updates?"
                     : (dlgAct === "install" ? "Install" : dlgAct === "uninstall" ? "Remove" : "Set") +
                       " Camoufox " + dlgVer + "-" + dlgBuild +
                       (dlgAct === "install" ? "?" : dlgAct === "uninstall" ? " from disk?" : " as active?")
@@ -404,13 +432,25 @@ ApplicationWindow {
                 spacing: s2
 
                 Btn {
-                    text: dlgAct === "promptInstall" ? "Skip" : "Cancel"
+                    text: (dlgAct === "promptInstall" || dlgAct === "promptPin" || dlgAct === "promptFollow") ? "Skip" : "Cancel"
                     onClicked: dlgAct = ""
                 }
 
                 Btn {
+                    visible: dlgAct === "promptFollow"
+                    text: "Pin Version"
+                    accent: c.accent
+                    onClicked: {
+                        backend.setActive(dlgIdx)
+                        dlgAct = ""
+                    }
+                }
+
+                Btn {
                     text: (dlgAct === "install" || dlgAct === "promptInstall") ? "Install"
-                        : dlgAct === "uninstall" ? "Uninstall" : "Set Active"
+                        : dlgAct === "uninstall" ? "Uninstall"
+                        : dlgAct === "promptPin" ? "Pin Version"
+                        : dlgAct === "promptFollow" ? "Follow Channel" : "Set Active"
                     accent: dlgAct === "uninstall" ? c.err
                         : (dlgAct === "install" || dlgAct === "promptInstall") ? c.ok : c.accent
                     onClicked: {
@@ -418,6 +458,10 @@ ApplicationWindow {
                             backend.installSelected()
                         } else if (dlgAct === "uninstall") {
                             backend.uninstallSelected()
+                        } else if (dlgAct === "promptPin") {
+                            backend.setActive(dlgIdx)
+                        } else if (dlgAct === "promptFollow") {
+                            backend.followVersionChannel(dlgIdx)
                         } else if (dlgAct === "channel") {
                             backend.confirmFollowChannel()
                             if (backend.canInstall) {
@@ -446,6 +490,9 @@ ApplicationWindow {
         }
         function onChannelPrompt(idx, display, build) {
             showDlg("channel", idx, display, build)
+        }
+        function onInstalledPrompt(idx, display, build, latest, channel) {
+            showDlg(latest ? "promptFollow" : "promptPin", idx, display, build, channel)
         }
     }
 
@@ -599,12 +646,18 @@ ApplicationWindow {
 
                                 Row {
                                     spacing: s2
-                                    Check { on: backend.followedChannel === backend.channelKeys[index]; anchors.verticalCenter: parent.verticalCenter }
+                                    PinButton {
+                                        pinned: backend.followedChannel === backend.channelKeys[index]
+                                        pinToolTip: "Follow channel"
+                                        unpinToolTip: "Following channel"
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        onClicked: backend.setFollowedChannel(index)
+                                    }
                                     T { text: (backend.followedChannel === backend.channelKeys[index] ? "Following " : "Follow ") + modelData; anchors.verticalCenter: parent.verticalCenter }
                                 }
 
                                 Muted {
-                                    leftPadding: s3 + s2
+                                    leftPadding: s4 + s2
                                     text: backend.channelLatest[index] ? ("Latest: " + backend.channelLatest[index]) : "(sync first)"
                                     font.pixelSize: Math.round(10 * scale)
                                 }
@@ -661,13 +714,19 @@ ApplicationWindow {
 
                                 Header {
                                     text: "VERSION"
-                                    width: colW
+                                    width: verColW
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
 
                                 Header {
                                     text: "BUILD"
-                                    width: colW
+                                    width: verColW
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+
+                                Header {
+                                    text: "DATE"
+                                    width: dateColW
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
 
@@ -744,24 +803,34 @@ ApplicationWindow {
                                     spacing: s3
                                     visible: !model.isHeader
 
-                                    Check {
-                                        on: model.isPinned
-                                        MouseArea {
-                                            anchors.fill: parent
-                                            cursorShape: Qt.PointingHandCursor
-                                            onClicked: showDlg("setActive", index, model.display, model.build)
+                                    PinButton {
+                                        pinned: model.isPinned
+                                        enabled: model.note === ""
+                                        onClicked: {
+                                            if (model.isPinned) {
+                                                backend.unpinVersion(index)
+                                            } else {
+                                                showDlg("setActive", index, model.display, model.build)
+                                            }
                                         }
                                     }
 
                                     T {
                                         text: model.display
                                         color: model.isInstalled ? c.text : c.dim
-                                        Layout.preferredWidth: colW
+                                        Layout.preferredWidth: verColW
                                     }
 
-                                    Muted {
+                                    T {
                                         text: model.build
-                                        Layout.preferredWidth: colW
+                                        color: model.isInstalled ? c.text : c.dim
+                                        Layout.preferredWidth: verColW
+                                    }
+
+                                    T {
+                                        text: model.date
+                                        color: model.isInstalled ? c.text : c.dim
+                                        Layout.preferredWidth: dateColW
                                     }
 
                                     Row {
@@ -777,6 +846,11 @@ ApplicationWindow {
                                             visible: model.isActive
                                             text: "active"
                                             accent: c.accent
+                                        }
+
+                                        Tag {
+                                            visible: model.note !== ""
+                                            text: model.note
                                         }
                                     }
 

@@ -34,6 +34,15 @@ Main patcher functions
 """
 
 
+def reset_to_unpatched():
+    """Reset this source repository without discovering a parent repository."""
+    if not os.path.exists('.git'):
+        return
+
+    print("Resetting to unpatched state...")
+    run('git reset --hard unpatched && ./mach clobber && git clean -fdx')
+
+
 @dataclass
 class Patcher:
     """Patch and prepare the Camoufox source"""
@@ -47,9 +56,8 @@ class Patcher:
         """
         version, release = extract_args()
         with temp_cd(find_src_dir('.', version, release)):
-            # Reset to unpatched state first (like "Find broken patches")
-            print("Resetting to unpatched state...")
-            run('git clean -fdx && ./mach clobber && git reset --hard unpatched', exit_on_fail=False)
+            # Reset only when the source tree has its own local repository.
+            reset_to_unpatched()
 
             # Re-copy additions and settings after reset
             print("Re-copying additions and settings...")
@@ -196,7 +204,7 @@ def add_rustup(*targets):
 def _update_rustup(target):
     """Add rust targets for the given target"""
     if target == "linux":
-        add_rustup("aarch64-unknown-linux-gnu", "i686-unknown-linux-gnu")
+        add_rustup("aarch64-unknown-linux-gnu")
     elif target == "windows":
         add_rustup("x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc", "i686-pc-windows-msvc")
     elif target == "macos":

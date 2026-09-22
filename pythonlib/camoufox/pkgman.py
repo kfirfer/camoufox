@@ -32,6 +32,7 @@ from .__version__ import CONSTRAINTS
 from .exceptions import (
     CamoufoxNotInstalled,
     MissingRelease,
+    ProfileDirectoryError,
     UnsupportedArchitecture,
     UnsupportedOS,
     UnsupportedVersion,
@@ -78,6 +79,41 @@ GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 console = Console()
 
 
+def ensure_browser_profile_dir(
+    env: Optional[Dict[str, Union[str, float, bool]]] = None,
+) -> Optional[Path]:
+    """Ensure Firefox's Linux application directory exists before startup.
+
+    Firefox probes ``~/.camoufox`` even when Playwright supplies a temporary
+    profile. On a read-only HOME, a missing directory makes startup stall; an
+    existing directory may itself remain read-only.
+    """
+    if OS_NAME != 'lin':
+        return None
+
+    environment = os.environ if env is None else env
+    configured_home = environment.get('HOME')
+    home = Path(str(configured_home)).expanduser() if configured_home else Path.home()
+    profile_dir = home / '.camoufox'
+    if profile_dir.is_dir():
+        return profile_dir
+
+    try:
+        profile_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    except OSError as error:
+        raise ProfileDirectoryError(
+            f"Camoufox requires '{profile_dir}' to exist before launch, but it "
+            "could not be created. For a read-only runtime, create this directory "
+            "before making HOME read-only."
+        ) from error
+
+    if not profile_dir.is_dir():
+        raise ProfileDirectoryError(
+            f"Camoufox requires '{profile_dir}' to be a directory before launch."
+        )
+    return profile_dir
+
+
 def rprint(msg: str, fg: Optional[str] = None, nl: bool = True) -> None:
     """
     Print a styled message
@@ -116,17 +152,34 @@ def _get_library_version() -> str:
 
 def _find_version_constraints(versions: List[Dict], library_version: str) -> Optional[Dict]:
     """
-    Find browser build constraints for the current library version.
-    Each entry has python_library {min, max} and browser {min, max}.
+    Find the browser build constraint for the current library version
     """
     lib_parts = _parse_semver(library_version)
+    newest: Optional[Dict] = None
+    newest_min: Optional[Tuple[int, ...]] = None
     for entry in versions:
         py_lib = entry.get('python_library', {})
         lib_min = _parse_semver(py_lib.get('min', '0'))
         lib_max = _parse_semver(py_lib.get('max', '999'))
         if lib_min <= lib_parts < lib_max:
             return entry.get('browser')
-    return None
+        if newest_min is None or lib_min > newest_min:
+            newest_min, newest = lib_min, entry.get('browser')
+    return newest
+
+
+def _channel_bounds(
+    browser: Optional[Dict], channel: str
+) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Get the min and max build bounds for a channel
+    """
+    if not browser:
+        return None, None
+    if 'stable' in browser or 'prerelease' in browser:
+        section = browser.get(channel) or {}
+        return section.get('min'), section.get('max')
+    return browser.get('min'), browser.get('max')
 
 
 @dataclass
@@ -140,8 +193,10 @@ class RepoConfig:
     pattern: str
     os_map: Dict[str, str]
     arch_map: Dict[str, str]
-    build_min: Optional[str] = None
-    build_max: Optional[str] = None
+    stable_min: Optional[str] = None
+    stable_max: Optional[str] = None
+    prerelease_min: Optional[str] = None
+    prerelease_max: Optional[str] = None
 
     @property
     def repo(self) -> str:
@@ -178,14 +233,12 @@ class RepoConfig:
         if 'pattern' not in d:
             raise ValueError(f"Repo '{d.get('name', 'unknown')}' missing required pattern")
 
-        build_min: Optional[str] = None
-        build_max: Optional[str] = None
+        browser: Optional[Dict] = None
         if d.get('versions'):
             library_version = spoof_library_version or _get_library_version()
             browser = _find_version_constraints(d['versions'], library_version)
-            if browser:
-                build_min = browser.get('min')
-                build_max = browser.get('max')
+        stable_min, stable_max = _channel_bounds(browser, 'stable')
+        prerelease_min, prerelease_max = _channel_bounds(browser, 'prerelease')
 
         # Parse comma separated repos list (primary + fallbacks)
         raw_repo = d['repo']
@@ -197,8 +250,10 @@ class RepoConfig:
             pattern=d['pattern'],
             os_map=OS_MAP,
             arch_map=ARCH_MAP,
-            build_min=build_min,
-            build_max=build_max,
+            stable_min=stable_min,
+            stable_max=stable_max,
+            prerelease_min=prerelease_min,
+            prerelease_max=prerelease_max,
         )
 
     @staticmethod
@@ -263,15 +318,17 @@ class RepoConfig:
         regex = re.sub(r'\{(\w+)\}', lambda m: replacements.get(m[1], m[0]), pattern)
         return re.compile(regex)
 
-    def is_version_supported(self, version: 'Version') -> bool:
+    def is_version_supported(self, version: 'Version', is_prerelease: bool = False) -> bool:
         """
-        Check if a version is within the repo's supported build range
+        Check if a build is within the supported range for its channel
         """
-        if self.build_min is None or self.build_max is None:
+        if is_prerelease:
+            build_min, build_max = self.prerelease_min, self.prerelease_max
+        else:
+            build_min, build_max = self.stable_min, self.stable_max
+        if build_min is None or build_max is None:
             return True
-        build_min = Version(build=self.build_min)
-        build_max = Version(build=self.build_max)
-        return build_min <= version <= build_max
+        return Version(build=build_min) <= version <= Version(build=build_max)
 
 
 @total_ordering
@@ -296,6 +353,13 @@ class Version:
     def full_string(self) -> str:
         return f"{self.version}-{self.build}"
 
+    @property
+    def is_alpha(self) -> bool:
+        """
+        Whether the build channel is alpha (like 'alpha.26')
+        """
+        return self.build.split('.')[0].lower() == 'alpha'
+
     def __eq__(self, other) -> bool:
         return self.sorted_rel == other.sorted_rel
 
@@ -303,7 +367,7 @@ class Version:
         return self.sorted_rel < other.sorted_rel
 
     def is_supported(self) -> bool:
-        return VERSION_MIN <= self < VERSION_MAX
+        return effective_version_min() <= self < VERSION_MAX
 
     @staticmethod
     def from_path(path: Optional[Path] = None) -> 'Version':
@@ -340,6 +404,34 @@ class Version:
 
 
 VERSION_MIN, VERSION_MAX = Version.build_minmax()
+
+
+def _resolved_playwright_version() -> Optional[Tuple[int, ...]]:
+    """The installed Playwright version, or None if it cannot be determined."""
+    from importlib.metadata import version
+
+    try:
+        return _parse_semver(version('playwright'))
+    except Exception:
+        return None
+
+
+def effective_version_min() -> 'Version':
+    """The lowest browser build this install can actually talk to.
+
+    VERSION_MIN, raised by whatever the resolved Playwright requires. When the
+    Playwright version cannot be read we fall back to VERSION_MIN rather than
+    assuming the worst: a spurious forced re-download is worse than leaving a
+    working install alone, and pyproject caps Playwright anyway.
+    """
+    floor = VERSION_MIN
+    playwright_version = _resolved_playwright_version()
+    if playwright_version is None:
+        return floor
+    for required_playwright, build in CONSTRAINTS.PLAYWRIGHT_BROWSER_FLOORS:
+        if playwright_version >= required_playwright and floor < Version(build=build):
+            floor = Version(build=build)
+    return floor
 
 
 class GitHubDownloader:
@@ -412,6 +504,15 @@ class AvailableVersion:
     asset_id: Optional[int] = None
     asset_size: Optional[int] = None
     asset_updated_at: Optional[str] = None
+    sha256: Optional[str] = None
+    asset_created_at: Optional[str] = None
+
+    @property
+    def sha8(self) -> str:
+        """
+        First 8 hex chars of the sha256, or empty when unknown
+        """
+        return (self.sha256 or "")[:8]
 
     @property
     def display(self) -> str:
@@ -432,6 +533,8 @@ class AvailableVersion:
             'asset_id': self.asset_id,
             'asset_size': self.asset_size,
             'asset_updated_at': self.asset_updated_at,
+            'sha256': self.sha256,
+            'created_at': self.asset_created_at,
         }
 
 
@@ -452,14 +555,25 @@ class CamoufoxFetcher(GitHubDownloader):
         self._version_obj: Optional[Version] = None
         self._selected_version: Optional[AvailableVersion] = None
         self.pattern: re.Pattern = self.repo_config.build_pattern()
+        self.installed_sha256: Optional[str] = None
+        self.installed_created_at: Optional[str] = None
 
         if selected_version:
             self._selected_version = selected_version
             self._version_obj = selected_version.version
             self._url = selected_version.url
             self.is_prerelease = selected_version.is_prerelease
+            self.installed_sha256 = selected_version.sha256
+            self.installed_created_at = selected_version.asset_created_at
         else:
             self.fetch_latest()
+
+    @property
+    def installed_sha8(self) -> str:
+        """
+        First 8 hex chars of the installed asset sha, or empty
+        """
+        return (self.installed_sha256 or "")[:8]
 
     def check_asset(
         self, asset: Dict, release: Optional[Dict] = None
@@ -472,8 +586,14 @@ class CamoufoxFetcher(GitHubDownloader):
             return None
 
         version = Version(build=match['build'], version=match['version'])
-        if not self.repo_config.is_version_supported(version):
+        is_prerelease = bool(release and release.get('prerelease')) or version.is_alpha
+        if not self.repo_config.is_version_supported(version, is_prerelease):
             return None
+
+        digest = asset.get('digest') or ''
+        if digest.startswith('sha256:'):
+            self.installed_sha256 = digest.split(':', 1)[1]
+        self.installed_created_at = asset.get('created_at')
 
         return version, asset['browser_download_url']
 
@@ -539,6 +659,7 @@ class CamoufoxFetcher(GitHubDownloader):
         from .multiversion import install_versioned
 
         install_versioned(self, replace=replace)
+        ensure_browser_profile_dir()
 
     @property
     def url(self) -> str:
@@ -603,7 +724,6 @@ def list_available_versions(
         raise last_error
 
     versions: List[AvailableVersion] = []
-    seen_builds: set = set()
 
     for release in releases:
         is_prerelease = release.get('prerelease', False)
@@ -617,25 +737,29 @@ def list_available_versions(
                 continue
 
             version = Version(build=match['build'], version=match['version'])
-            if not config.is_version_supported(version):
+            asset_prerelease = is_prerelease or version.is_alpha
+            if asset_prerelease and not include_prerelease:
+                continue
+            if not config.is_version_supported(version, asset_prerelease):
                 continue
 
-            if version.build in seen_builds:
-                continue
-            seen_builds.add(version.build)
+            digest = asset.get('digest') or ''
+            sha256 = digest.split(':', 1)[1] if digest.startswith('sha256:') else None
 
             versions.append(
                 AvailableVersion(
                     version=version,
                     url=asset['browser_download_url'],
-                    is_prerelease=is_prerelease,
+                    is_prerelease=asset_prerelease,
                     asset_id=asset.get('id'),
                     asset_size=asset.get('size'),
                     asset_updated_at=asset.get('updated_at'),
+                    sha256=sha256,
+                    asset_created_at=asset.get('created_at'),
                 )
             )
 
-    versions.sort(key=lambda x: x.version, reverse=True)
+    versions.sort(key=lambda x: (x.version, x.asset_created_at or ""), reverse=True)
     return versions
 
 
@@ -657,6 +781,22 @@ def installed_verstr() -> str:
             f"{active_display} is not installed. " f"Please run `camoufox fetch` to install."
         )
     return Version.from_path(active).full_string
+
+
+def _root_install_supported() -> bool:
+    """
+    Whether INSTALL_DIR's root holds a supported build.
+
+    Only the pre-multiversion flat layout wrote version.json at the root; the
+    versioned layout keeps it under browsers/<repo>/<version>/. A missing root
+    version.json means "no legacy install here", so the caller should fall
+    through to a fetch rather than raise. The alpha.1 floor masked this: no
+    install was ever unsupported, so this branch was never reached.
+    """
+    try:
+        return Version.from_path().is_supported()
+    except FileNotFoundError:
+        return False
 
 
 def camoufox_path(download_if_missing: bool = True) -> Path:
@@ -691,7 +831,7 @@ def camoufox_path(download_if_missing: bool = True) -> Path:
                 f"{active_display} is not installed. " f"Please run `camoufox fetch` to install."
             )
 
-    elif os.path.exists(INSTALL_DIR) and Version.from_path().is_supported():
+    elif os.path.exists(INSTALL_DIR) and _root_install_supported():
         return INSTALL_DIR
 
     else:
@@ -699,7 +839,24 @@ def camoufox_path(download_if_missing: bool = True) -> Path:
             raise UnsupportedVersion("Camoufox executable is outdated.")
 
     CamoufoxFetcher().install()
-    return camoufox_path()
+
+    # Re-check rather than recurse.
+    #
+    # If the newest published build is still below the floor -- a library
+    # published ahead of its browser release, or a repos.yml source that does
+    # not carry it -- install() is a no-op ("already installed") and recursing
+    # here spun ~1000 fetch attempts into a RecursionError, having hammered the
+    # GitHub API into a rate limit on the way. Say what is actually wrong.
+    active = get_active_path()
+    if active and Version.from_path(active).is_supported():
+        return active
+    if os.path.exists(INSTALL_DIR) and _root_install_supported():
+        return INSTALL_DIR
+    raise UnsupportedVersion(
+        f"No available Camoufox build satisfies this library's minimum "
+        f"({CONSTRAINTS.MIN_VERSION}). The matching browser release may not be "
+        f"published yet; wait for it, or install an older camoufox release."
+    )
 
 
 def get_path(file: str) -> str:
@@ -832,3 +989,22 @@ def load_yaml(file: str) -> Dict[str, Any]:
     """
     with open(LOCAL_DATA / file, 'r') as f:
         return load(f, Loader=CLoader)
+
+
+def format_asset_date(iso: Optional[str], now: Optional[Any] = None) -> str:
+    """
+    Format an asset timestamp as Mon D, or Mon D, YYYY when the year differs
+    """
+    if not iso:
+        return ""
+    from datetime import datetime
+
+    try:
+        dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return ""
+    current_year = (now or datetime.now()).year
+    month = dt.strftime("%b")
+    if dt.year == current_year:
+        return f"{month} {dt.day}"
+    return f"{month} {dt.day}, {dt.year}"
